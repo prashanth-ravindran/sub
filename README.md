@@ -10,6 +10,8 @@ Why SOCK_SEQPACKET?
 - Full duplex. The same connection supports simulator → controller state messages and controller → simulator actuator commands.
 - Easy failure detection. Disconnects, broken pipes, and missing data are explicit and easy to test.
 
+Other options considered are below
+
 | Option        | Why not preferred here                                                                |
 | ------------- | ------------------------------------------------------------------------------------- |
 | `SOCK_STREAM` | Reliable, but requires manual message framing                                         |
@@ -27,3 +29,4 @@ Why SOCK_SEQPACKET?
 https://www.fossen.biz/html/marineCraftModel.html - Used it to understand fossen model better
 https://man7.org/linux/man-pages/man7/unix.7.html - UNIX manpages for SOCK_SEQPACKET
 https://docs.python.org/3/library/socket.html - SOCK_SEQPACKET in python
+https://github.com/cybergalactic/FossenHandbook - The full fossen textbook slides, used to scout for reasonable parameters
