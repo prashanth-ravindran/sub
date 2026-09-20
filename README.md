@@ -29,4 +29,5 @@ Other options considered are below
 https://www.fossen.biz/html/marineCraftModel.html - Used it to understand fossen model better
 https://man7.org/linux/man-pages/man7/unix.7.html - UNIX manpages for SOCK_SEQPACKET
 https://docs.python.org/3/library/socket.html - SOCK_SEQPACKET in python
-https://github.com/cybergalactic/FossenHandbook - The full fossen textbook slides, used to scout for reasonable parameters
+https://github.com/cybergalactic/FossenHandbook - The full fossen textbook slides
+https://github.com/cybergalactic/MSS - Used to scout for reasonable parameters
