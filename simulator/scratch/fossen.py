@@ -13,6 +13,28 @@ Included:
   7) NED -> latitude/longitude
   8) Thrust, elevator and rudder step scenarios
 
+  Fossen model returns the derivative of the state vector, that an integrator needs to integrate to estimate the next
+  state
+        current state X
+              │
+              ▼
+           controller (another component)
+              │
+              ▼
+         forces τ
+              │
+              ▼
+         Fossen model
+              │
+              ▼
+          Ẋ = f(X,τ)
+              │
+              ▼
+         ODE integrator
+              │
+              ▼
+        next state X
+
 Install:
     pip install numpy matplotlib
 
