@@ -59,8 +59,42 @@ def latest_metrics(latest):
         st.metric("Elevator", f"{command['elevator_deg']:.2f}°")
         st.metric("Rudder", f"{command['rudder_deg']:.2f}°")
     st.caption(f"NED: north {position['north_m']:.2f} m, east {position['east_m']:.2f} m")
-    with st.expander("Latest simulator state and controller output"):
-        st.json({"state": state, "command": command})
+    with st.expander("Latest simulator state and controller output", expanded=True):
+        st.caption(f"Sample {state['sequence']:,} · Refreshes every second while running.")
+        vehicle, control = st.columns(2)
+        with vehicle:
+            st.markdown("**Vehicle state**")
+            st.table({
+                "Simulation time": f"{state['simulation_time_s']:.2f} s",
+                "North": f"{position['north_m']:.2f} m",
+                "East": f"{position['east_m']:.2f} m",
+                "Down (NED)": f"{position['down_m']:.2f} m",
+                "Depth": f"{state['depth_m']:.2f} m",
+                "Latitude": f"{state['geodetic']['latitude_deg']:.6f}°",
+                "Longitude": f"{state['geodetic']['longitude_deg']:.6f}°",
+                "Roll": f"{np.degrees(state['orientation']['roll_rad']):.2f}°",
+                "Pitch": f"{np.degrees(state['orientation']['pitch_rad']):.2f}°",
+                "Yaw": f"{np.degrees(state['orientation']['yaw_rad']):.2f}°",
+                "Surge velocity (u)": f"{velocity['u_mps']:.3f} m/s",
+                "Sway velocity (v)": f"{velocity['v_mps']:.3f} m/s",
+                "Heave velocity (w)": f"{velocity['w_mps']:.3f} m/s",
+                "Roll rate (p)": f"{state['angular_velocity_body']['p_radps']:.4f} rad/s",
+                "Pitch rate (q)": f"{state['angular_velocity_body']['q_radps']:.4f} rad/s",
+                "Yaw rate (r)": f"{state['angular_velocity_body']['r_radps']:.4f} rad/s",
+            }, border="horizontal")
+        with control:
+            st.markdown("**Controller output**")
+            st.table({
+                "Propeller": f"{command['rpm']:.0f} RPM",
+                "Elevator": f"{command['elevator_deg']:.2f}°",
+                "Rudder": f"{command['rudder_deg']:.2f}°",
+                "Depth setpoint": f"{command['depth_setpoint']:.2f} m",
+                "Speed setpoint": f"{command['speed_setpoint']:.2f} m/s",
+                "Pitch setpoint": f"{np.degrees(command['pitch_setpoint']):.2f}°",
+                "Heading setpoint": f"{np.degrees(command['heading_setpoint']) % 360:.2f}°",
+                "Distance to target": f"{command['distance']:.2f} m",
+                "Arrived": "Yes" if command['arrived'] else "No",
+            }, border="horizontal")
 
 
 @st.fragment(run_every="1s")

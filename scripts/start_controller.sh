@@ -22,7 +22,8 @@ trap cleanup EXIT
 
 "$python_bin" -m controller.http_api --port "$api_port" &
 api_pid=$!
-AUV_CONTROLLER_API_URL="http://127.0.0.1:$api_port" \
+PYTHONPATH="$project_root${PYTHONPATH:+:$PYTHONPATH}" \
+    AUV_CONTROLLER_API_URL="http://127.0.0.1:$api_port" \
     "$streamlit_bin" run ui/controller_app.py --server.address 127.0.0.1 --server.port "$ui_port" &
 ui_pid=$!
 wait -n "$api_pid" "$ui_pid"
