@@ -32,8 +32,14 @@ scripts/start_controller.sh
 ```
 
 Open the controller UI at `http://127.0.0.1:8502`. Its local API listens on
-port `8766`; submitting a mission starts a dedicated simulator process and
-connects to it over the Unix IPC socket.
+port `8766`. Starting the controller does not require the standalone simulator
+to be running. When a mission is submitted, the controller API automatically
+starts a dedicated simulator process with its own Unix IPC socket, connects to
+it over the repository IPC library, and stops that process when the mission
+reaches its goal or time horizon.
+
+The standalone simulator script is only needed when you want to run the
+simulator independently, inspect its UI, or drive it from another client.
 
 The scripts support `PYTHON_BIN`, `CONTROLLER_API_PORT`,
 `CONTROLLER_UI_PORT`, `SIMULATOR_API_PORT`, and `SIMULATOR_UI_PORT` environment
