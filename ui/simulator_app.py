@@ -34,6 +34,12 @@ def api(method, path, payload=None, *, csv=False):
     return data if csv else json.loads(data)
 
 
+@st.cache_data(max_entries=1, show_spinner="Loading completed run…")
+def load_result(run_id):
+    csv_bytes = api("GET", f"/api/runs/{run_id}/csv", csv=True)
+    return csv_bytes, pd.read_csv(BytesIO(csv_bytes))
+
+
 def parameter_inputs(defaults):
     """Render every current VehicleParameters field using API-supplied values."""
     selected = {}
@@ -80,7 +86,7 @@ def show_result(status):
         return
     run_id = status["run_id"]
     try:
-        csv_bytes = api("GET", f"/api/runs/{run_id}/csv", csv=True)
+        csv_bytes, frame = load_result(run_id)
     except RuntimeError as exc:
         st.error(str(exc))
         return
@@ -96,10 +102,13 @@ def show_result(status):
         mime="text/csv",
     )
 
-    frame = pd.read_csv(BytesIO(csv_bytes))
     if frame.empty:
         st.info("The run ended before its first simulation step.")
         return
+    chart_frame = frame
+    if len(frame) > 5000:
+        chart_frame = frame.iloc[np.linspace(0, len(frame) - 1, 5000, dtype=int)]
+        st.caption("Charts show 5,000 samples; the CSV contains every step.")
     final = frame.iloc[-1]
     position = st.columns(4)
     position[0].metric("North", f"{final['north_m']:.2f} m")
@@ -109,20 +118,20 @@ def show_result(status):
     st.caption(f"Final location: {final['latitude_deg']:.6f}°, {final['longitude_deg']:.6f}°")
 
     st.subheader("Depth")
-    st.line_chart(frame, x="simulation_time_s", y="depth_m", x_label="Simulation time (s)", y_label="Depth (m)")
+    st.line_chart(chart_frame, x="simulation_time_s", y="depth_m", x_label="Simulation time (s)", y_label="Depth (m)")
     angles = pd.DataFrame({
-        "simulation_time_s": frame["simulation_time_s"],
-        "Roll (deg)": np.degrees(frame["roll_rad"]),
-        "Pitch (deg)": np.degrees(frame["pitch_rad"]),
-        "Yaw (deg)": np.degrees(frame["yaw_rad"]),
+        "simulation_time_s": chart_frame["simulation_time_s"],
+        "Roll (deg)": np.degrees(chart_frame["roll_rad"]),
+        "Pitch (deg)": np.degrees(chart_frame["pitch_rad"]),
+        "Yaw (deg)": np.degrees(chart_frame["yaw_rad"]),
     })
     st.subheader("Attitude")
     st.line_chart(angles, x="simulation_time_s", y=["Roll (deg)", "Pitch (deg)", "Yaw (deg)"], x_label="Simulation time (s)", y_label="Angle (deg)")
     st.subheader("Body velocity")
-    st.line_chart(frame, x="simulation_time_s", y=["u_mps", "v_mps", "w_mps"], x_label="Simulation time (s)", y_label="Velocity (m/s)")
+    st.line_chart(chart_frame, x="simulation_time_s", y=["u_mps", "v_mps", "w_mps"], x_label="Simulation time (s)", y_label="Velocity (m/s)")
     st.subheader("North–East track")
     figure, axes = plt.subplots()
-    axes.plot(frame["east_m"], frame["north_m"])
+    axes.plot(chart_frame["east_m"], chart_frame["north_m"])
     axes.scatter([frame["east_m"].iloc[0], frame["east_m"].iloc[-1]],
                  [frame["north_m"].iloc[0], frame["north_m"].iloc[-1]])
     axes.set_xlabel("East (m)")
@@ -134,7 +143,7 @@ def show_result(status):
 
 st.set_page_config(page_title="Vehicle Simulator", layout="wide")
 st.title("Vehicle Simulator")
-st.caption("Configure a run here. The simulator service advances physics and handles controller IPC independently.")
+st.caption("Choose a scenario and vehicle parameters, then review the finished run.")
 
 try:
     config = api("GET", "/api/config")

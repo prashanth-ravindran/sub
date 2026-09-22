@@ -23,6 +23,48 @@ Other options considered are below
 | gRPC          | Far too heavy for 100 Hz local control messages                                       |
 | ROS 2/DDS     | Excellent robotics ecosystem, but much more infrastructure than this assignment needs |
 
+The controller is a waypoint-following autopilot for a torpedo-shaped autonomous underwater vehicle (AUV). It drives the vehicle toward a
+  target latitude/longitude while maintaining a requested depth and forward speed.
+
+It controls three actuators:
+
+| Objective | Feedback | Controlled actuator |
+|---|---|---|
+| Forward speed | Surge velocity and acceleration | Propeller RPM |
+| Depth and pitch | Depth, depth rate, pitch, pitch rate | Elevator |
+| Heading toward waypoint | Position, yaw, yaw rate | Rudder |
+
+  ### Controller - How it works
+
+  1. Waypoint guidance
+
+     The target latitude/longitude is converted into local north/east coordinates. Each cycle, the controller calculates:
+      - Remaining north and east distance
+      - Horizontal distance to the waypoint
+      - Desired heading using atan2(east_error, north_error)
+
+  2. Depth control
+
+     This is a cascaded controller:
+
+     depth error → desired pitch → elevator command
+
+     The depth PID converts the difference between requested and actual depth into a pitch setpoint. The pitch PID then uses pitch error and
+     pitch rate to command the elevator.
+
+  3. Heading control
+
+     The desired heading is compared with the current yaw. The error is wrapped into [-π, π], ensuring the vehicle takes the shortest turn. A
+     PID controller then converts this error and yaw rate into a rudder command.
+
+  4. Speed control
+
+     The speed controller combines two terms:
+      - Feed-forward RPM calculated from the shared Fossen model’s expected drag at the requested speed
+      - PID correction based on surge-speed error and acceleration
+
+     The feed-forward term provides approximately the thrust required to maintain speed, while the PID handles disturbances and transient
+     errors.
 
 # References
 
