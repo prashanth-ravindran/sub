@@ -151,7 +151,6 @@ class WaypointPIDController:
 
 class WaypointLQRController:
     def __init__(self, mission, dt):
-        from scipy.linalg import solve_discrete_are
         from scipy.signal import cont2discrete
 
         mission.validate()
@@ -164,7 +163,7 @@ class WaypointLQRController:
         drag = p.linear_u*mission.speed_mps + p.quad_u*mission.speed_mps**2
         trim_rpm = 60.0 * math.sqrt(drag / p.prop_k)
         if not 0 < trim_rpm < 3000:
-            raise ValueError("LQR cruise speed must require strictly between 0 and 3000 RPM")
+            raise ValueError("Cruise speed must require strictly between 0 and 3000 RPM")
         self.trim_command = np.array([trim_rpm, 0.0, 0.0])
         trim_state = np.zeros(13)
         trim_state[2] = mission.depth_m
@@ -203,10 +202,21 @@ class WaypointLQRController:
         ])
         self.Q = np.diag(1.0 / error_scales**2)
         self.R = np.diag(1.0 / np.array([800.0, 20.0, 20.0])**2)
+        self._compute_gain()
+
+    def _compute_gain(self):
+        from scipy.linalg import solve_discrete_are
+
         riccati = solve_discrete_are(self.A_d, self.B_d, self.Q, self.R)
         self.K = np.linalg.solve(
             self.R + self.B_d.T @ riccati @ self.B_d,
             self.B_d.T @ riccati @ self.A_d,
+        )
+
+    def actuator_command(self, error):
+        return np.clip(
+            self.trim_command - self.K @ error,
+            [0.0, -20.0, -20.0], [3000.0, 20.0, 20.0],
         )
 
     def command(self, telemetry):
@@ -221,10 +231,7 @@ class WaypointLQRController:
             wrap_pi(yaw - heading_setpoint), *telemetry["velocity"],
         ])
         error[4] -= self.mission.speed_mps
-        rpm, elevator, rudder = np.clip(
-            self.trim_command - self.K @ error,
-            [0.0, -20.0, -20.0], [3000.0, 20.0, 20.0],
-        )
+        rpm, elevator, rudder = self.actuator_command(error)
         return {
             "rpm": float(rpm),
             "elevator_deg": float(elevator),
@@ -236,6 +243,38 @@ class WaypointLQRController:
             "distance": distance,
             "arrived": distance <= self.mission.arrival_radius_m,
         }
+
+
+class WaypointLQIController(WaypointLQRController):
+    def __init__(self, mission, dt):
+        super().__init__(mission, dt)
+        self.dt = dt
+        self.tracking_indices = [0, 4, 3]
+        self.integral = np.zeros(3)
+        self.integral_limits = np.array([6.0, 20.0, 2*math.pi])
+        tracking = np.eye(10)[self.tracking_indices]
+        self.A_d = np.block([
+            [self.A_d, np.zeros((10, 3))],
+            [dt*tracking, np.eye(3)],
+        ])
+        self.B_d = np.vstack((self.B_d, np.zeros((3, 3))))
+        self.Q[0, 0] = 1.0
+        self.Q[2, 2] = 1.0 / math.radians(1.5)**2
+        integral_scales = np.array([30.0, 5.0, math.radians(360)])
+        self.Q = np.diag(np.r_[np.diag(self.Q), 1.0 / integral_scales**2])
+        self._compute_gain()
+
+    def actuator_command(self, error):
+        raw = self.trim_command - self.K @ np.r_[error, self.integral]
+        saturated = np.clip(raw, [0.0, -20.0, -20.0], [3000.0, 20.0, 20.0])
+        increment = self.dt * error[self.tracking_indices]
+        input_increment = -self.K[:, 10:] * increment
+        pushes_saturation = np.any(np.sign(raw - saturated)[:, None] * input_increment > 1e-9, axis=0)
+        self.integral = np.clip(
+            self.integral + np.where(pushes_saturation, 0.0, increment),
+            -self.integral_limits, self.integral_limits,
+        )
+        return saturated
 
 
 def controller_process(connection, controller):
@@ -295,9 +334,11 @@ def run_closed_loop(mission, duration, dt, controller_type="pid"):
         raise ValueError("Duration must be finite and positive")
     if not (math.isfinite(dt) and 0 < dt <= 0.1):
         raise ValueError("dt must be finite and in (0, 0.1] seconds")
-    if controller_type not in ("pid", "lqr"):
-        raise ValueError("Controller must be 'pid' or 'lqr'")
-    controller_class = {"pid": WaypointPIDController, "lqr": WaypointLQRController}[controller_type]
+    if controller_type not in ("pid", "lqr", "lqi"):
+        raise ValueError("Controller must be 'pid', 'lqr', or 'lqi'")
+    controller_class = {
+        "pid": WaypointPIDController, "lqr": WaypointLQRController, "lqi": WaypointLQIController,
+    }[controller_type]
     controller = controller_class(mission, dt)
 
     context = mp.get_context("spawn")
@@ -412,11 +453,12 @@ def self_test(controller_type="pid"):
     mission.validate()
     heading = math.atan2(mission.target_ne()[1], mission.target_ne()[0])
     assert abs(math.degrees(heading) - 90.0) < 1e-6
-    if controller_type == "lqr":
+    if controller_type in ("lqr", "lqi"):
         mission = Mission()
-        controller = WaypointLQRController(mission, 0.05)
+        controller_class = WaypointLQIController if controller_type == "lqi" else WaypointLQRController
+        controller = controller_class(mission, 0.05)
         assert np.max(np.abs(np.linalg.eigvals(controller.A_d - controller.B_d @ controller.K))) < 1.0
-        rows, arrived = run_closed_loop(mission, 450.0, 0.05, "lqr")
+        rows, arrived = run_closed_loop(mission, 450.0, 0.05, controller_type)
         data = np.asarray(rows)
         assert arrived and np.all(np.isfinite(data))
         assert np.all(data[:, FIELDS.index("depth_m")] >= 0)
@@ -425,12 +467,47 @@ def self_test(controller_type="pid"):
         final = dict(zip(FIELDS, rows[-1]))
         assert abs(final["depth_m"] - mission.depth_m) < 0.1
         assert abs(final["surge_speed_mps"] - mission.speed_mps) < 0.05
+    if controller_type == "lqi":
+        assert np.max(data[:, FIELDS.index("depth_m")]) - mission.depth_m < 0.1
+        assert np.max(np.abs(data[:, FIELDS.index("pitch_deg")])) < 23.0
+        settled_depth = data[data[:, FIELDS.index("time_s")] >= 65, FIELDS.index("depth_m")]
+        assert np.all(np.abs(settled_depth - mission.depth_m) < 0.1)
+        for axis in controller.tracking_indices:
+            for sign in (-1, 1):
+                controller.integral[:] = 0
+                error = np.zeros(10)
+                error[axis] = sign * 3.0
+                for _ in range(10):
+                    controller.actuator_command(error)
+                np.testing.assert_array_equal(controller.integral, 0)
+
+        controller.integral[:] = [0.0, -20.0, 0.0]
+        error = np.zeros(10)
+        error[4] = 0.1
+        assert controller.actuator_command(error)[0] == 3000.0
+        assert controller.integral[1] > -20.0
+
+        mission = Mission(target_lat=13.1, target_lon=80.2209)
+        controller = WaypointLQIController(mission, 0.1)
+        vehicle = AUV(P(quad_u=2*P().quad_u))
+        state = np.zeros(13)
+        state[2], state[3], state[7] = mission.depth_m, 1.0, mission.speed_mps
+        for _ in range(1800):
+            command = controller.command(telemetry_from_state(state, state[7], 0.1))
+            command["elevator_deg"] = clamp(command["elevator_deg"] + 2.0, -20, 20)
+            command["rudder_deg"] = clamp(command["rudder_deg"] + 1.0, -20, 20)
+            state = vehicle.step_rk4(state, command, 0.1)
+            assert np.all(np.abs(controller.integral) <= controller.integral_limits)
+        heading = math.atan2(controller.target_east - state[1], controller.target_north - state[0])
+        assert abs(state[2] - mission.depth_m) < 1e-3
+        assert abs(state[7] - mission.speed_mps) < 1e-3
+        assert abs(wrap_pi(q_to_euler(state[3:7])[2] - heading)) < 1e-3
     print("Self-test passed")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--controller", choices=("pid", "lqr"), default="pid")
+    parser.add_argument("--controller", choices=("pid", "lqr", "lqi"), default="pid")
     parser.add_argument("--start-lat", type=float, default=12.9716)
     parser.add_argument("--start-lon", type=float, default=80.2209)
     parser.add_argument("--target-lat", type=float, default=12.9752)
