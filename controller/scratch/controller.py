@@ -148,9 +148,97 @@ class WaypointPIDController:
         }
 
 
-def controller_process(connection, mission, dt):
+class WaypointLQRController:
+    def __init__(self, mission, dt):
+        from scipy.linalg import solve_discrete_are
+        from scipy.signal import cont2discrete
+
+        mission.validate()
+        if not (math.isfinite(dt) and 0 < dt <= 0.1):
+            raise ValueError("dt must be finite and in (0, 0.1] seconds")
+        self.mission = mission
+        self.target_north, self.target_east = mission.target_ne()
+        vehicle = AUV()
+        p = vehicle.p
+        drag = p.linear_u*mission.speed_mps + p.quad_u*mission.speed_mps**2
+        trim_rpm = 60.0 * math.sqrt(drag / p.prop_k)
+        if not 0 < trim_rpm < 3000:
+            raise ValueError("LQR cruise speed must require strictly between 0 and 3000 RPM")
+        self.trim_command = np.array([trim_rpm, 0.0, 0.0])
+        trim_state = np.zeros(13)
+        trim_state[2] = mission.depth_m
+        trim_state[3] = 1.0
+        trim_state[7] = mission.speed_mps
+        state_map = np.zeros((13, 10))
+        state_map[2, 0] = 1.0
+        state_map[4:7, 1:4] = 0.5 * np.eye(3)
+        state_map[7:13, 4:10] = np.eye(6)
+
+        def reduced_derivative(error, actuators):
+            derivative = vehicle.derivative(
+                trim_state + state_map @ error,
+                dict(zip(("rpm", "elevator_deg", "rudder_deg"), actuators)),
+            )
+            return np.r_[derivative[2], 2.0*derivative[4:7], derivative[7:13]]
+
+        epsilon = 1e-5
+        self.A = np.column_stack([
+            (reduced_derivative(delta, self.trim_command)
+             - reduced_derivative(-delta, self.trim_command)) / (2*epsilon)
+            for delta in epsilon * np.eye(10)
+        ])
+        input_steps = np.array([min(1e-3, trim_rpm/2, (3000-trim_rpm)/2), 1e-3, 1e-3])
+        self.B = np.column_stack([
+            (reduced_derivative(np.zeros(10), self.trim_command + delta)
+             - reduced_derivative(np.zeros(10), self.trim_command - delta)) / (2*step)
+            for delta, step in zip(np.diag(input_steps), input_steps)
+        ])
+        self.A_d, self.B_d, _, _, _ = cont2discrete(
+            (self.A, self.B, np.eye(10), np.zeros((10, 3))), dt,
+        )
+        error_scales = np.array([
+            5.0, math.radians(10), math.radians(15), math.radians(30),
+            0.3, 0.5, 0.5, math.radians(10), math.radians(15), math.radians(15),
+        ])
+        self.Q = np.diag(1.0 / error_scales**2)
+        self.R = np.diag(1.0 / np.array([800.0, 20.0, 20.0])**2)
+        riccati = solve_discrete_are(self.A_d, self.B_d, self.Q, self.R)
+        self.K = np.linalg.solve(
+            self.R + self.B_d.T @ riccati @ self.B_d,
+            self.B_d.T @ riccati @ self.A_d,
+        )
+
+    def command(self, telemetry):
+        north, east, depth = telemetry["position"]
+        roll, pitch, yaw = telemetry["euler"]
+        delta_n = self.target_north - north
+        delta_e = self.target_east - east
+        heading_setpoint = math.atan2(delta_e, delta_n)
+        distance = math.hypot(delta_n, delta_e)
+        error = np.array([
+            depth - self.mission.depth_m, roll, pitch,
+            wrap_pi(yaw - heading_setpoint), *telemetry["velocity"],
+        ])
+        error[4] -= self.mission.speed_mps
+        rpm, elevator, rudder = np.clip(
+            self.trim_command - self.K @ error,
+            [0.0, -20.0, -20.0], [3000.0, 20.0, 20.0],
+        )
+        return {
+            "rpm": float(rpm),
+            "elevator_deg": float(elevator),
+            "rudder_deg": float(rudder),
+            "depth_setpoint": self.mission.depth_m,
+            "pitch_setpoint": 0.0,
+            "heading_setpoint": heading_setpoint,
+            "speed_setpoint": self.mission.speed_mps,
+            "distance": distance,
+            "arrived": distance <= self.mission.arrival_radius_m,
+        }
+
+
+def controller_process(connection, controller):
     """IPC worker: telemetry in, actuator command out, until None is sent."""
-    controller = WaypointPIDController(mission, dt)
     try:
         while True:
             telemetry = connection.recv()
@@ -199,19 +287,23 @@ def log_row(t, state, command, mission):
     ]
 
 
-def run_closed_loop(mission, duration, dt):
+def run_closed_loop(mission, duration, dt, controller_type="pid"):
     """Run simulator in this process and controller in an IPC worker."""
     mission.validate()
     if not (math.isfinite(duration) and duration > 0):
         raise ValueError("Duration must be finite and positive")
     if not (math.isfinite(dt) and 0 < dt <= 0.1):
         raise ValueError("dt must be finite and in (0, 0.1] seconds")
+    if controller_type not in ("pid", "lqr"):
+        raise ValueError("Controller must be 'pid' or 'lqr'")
+    controller_class = {"pid": WaypointPIDController, "lqr": WaypointLQRController}[controller_type]
+    controller = controller_class(mission, dt)
 
     context = mp.get_context("spawn")
     simulator_end, controller_end = context.Pipe(duplex=True)
     worker = context.Process(
-        target=controller_process, args=(controller_end, mission, dt),
-        name="auv-pid-controller",
+        target=controller_process, args=(controller_end, controller),
+        name=f"auv-{controller_type}-controller",
     )
     worker.start()
     controller_end.close()
@@ -262,7 +354,7 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def plot_results(rows, mission):
+def plot_results(rows, mission, controller_type="pid"):
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:
@@ -306,12 +398,12 @@ def plot_results(rows, mission):
     axes[2, 2].grid(True)
     axes[2, 2].legend()
 
-    fig.suptitle("6-DOF AUV waypoint PID demonstration", fontsize=15)
+    fig.suptitle(f"6-DOF AUV waypoint {controller_type.upper()} demonstration", fontsize=15)
     plt.show()
     plt.close(fig)
 
 
-def self_test():
+def self_test(controller_type="pid"):
     assert abs(wrap_pi(3*math.pi) + math.pi) < 1e-12
     north, east = latlon_to_ne(0.0, 1.0, 0.0, 0.0)
     assert abs(north) < 1e-12 and 111_000 < east < 112_000
@@ -319,11 +411,25 @@ def self_test():
     mission.validate()
     heading = math.atan2(mission.target_ne()[1], mission.target_ne()[0])
     assert abs(math.degrees(heading) - 90.0) < 1e-6
+    if controller_type == "lqr":
+        mission = Mission()
+        controller = WaypointLQRController(mission, 0.05)
+        assert np.max(np.abs(np.linalg.eigvals(controller.A_d - controller.B_d @ controller.K))) < 1.0
+        rows, arrived = run_closed_loop(mission, 450.0, 0.05, "lqr")
+        data = np.asarray(rows)
+        assert arrived and np.all(np.isfinite(data))
+        assert np.all(data[:, FIELDS.index("depth_m")] >= 0)
+        assert np.all((data[:, -3] >= 0) & (data[:, -3] <= 3000))
+        assert np.all(np.abs(data[:, -2:]) <= 20)
+        final = dict(zip(FIELDS, rows[-1]))
+        assert abs(final["depth_m"] - mission.depth_m) < 0.1
+        assert abs(final["surge_speed_mps"] - mission.speed_mps) < 0.05
     print("Self-test passed")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--controller", choices=("pid", "lqr"), default="pid")
     parser.add_argument("--start-lat", type=float, default=12.9716)
     parser.add_argument("--start-lon", type=float, default=80.2209)
     parser.add_argument("--target-lat", type=float, default=12.9752)
@@ -333,7 +439,7 @@ def parse_args():
     parser.add_argument("--arrival-radius", type=float, default=15.0, help="Arrival radius [m]")
     parser.add_argument("--duration", type=float, default=450.0, help="Maximum simulated seconds")
     parser.add_argument("--dt", type=float, default=0.05, help="Simulation/control period [s]")
-    parser.add_argument("--output-prefix", default="auv_pid_results")
+    parser.add_argument("--output-prefix")
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args()
 
@@ -341,7 +447,7 @@ def parse_args():
 def main():
     args = parse_args()
     if args.self_test:
-        self_test()
+        self_test(args.controller)
         return
 
     mission = Mission(
@@ -353,11 +459,11 @@ def main():
     bearing = math.degrees(math.atan2(target_east, target_north)) % 360.0
     print(f"Mission: {distance:.1f} m at initial bearing {bearing:.1f} deg")
 
-    rows, arrived = run_closed_loop(mission, args.duration, args.dt)
-    prefix = Path(args.output_prefix)
+    rows, arrived = run_closed_loop(mission, args.duration, args.dt, args.controller)
+    prefix = Path(args.output_prefix or f"auv_{args.controller}_results")
     csv_path = prefix.with_suffix(".csv")
     write_csv(csv_path, rows)
-    plot_results(rows, mission)
+    plot_results(rows, mission, args.controller)
 
     final = dict(zip(FIELDS, rows[-1]))
     status = "ARRIVED" if arrived else "TIME LIMIT"
