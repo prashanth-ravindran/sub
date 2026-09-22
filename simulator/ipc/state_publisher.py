@@ -10,11 +10,14 @@ class StatePublisher:
 
     def publish(self, server, message):
         if server.connection is None:
-            return
+            return False
         try:
             server.send(message)
             self.published += 1
+            return True
         except BlockingIOError:
             self.dropped += 1
+            return False
         except IPCDisconnected:
             server.disconnect()
+            return False

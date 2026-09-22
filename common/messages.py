@@ -14,6 +14,12 @@ Message types:
 
     actuator_command
         Controller -> Simulator
+
+    simulation_stop
+        Controller -> synchronized Simulator, at a control boundary
+
+In synchronized mode, actuator_command includes state_sequence identifying
+the published boundary state to which the command responds.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ PROTOCOL_VERSION = 1
 
 MESSAGE_TYPE_VEHICLE_STATE = "vehicle_state"
 MESSAGE_TYPE_ACTUATOR_COMMAND = "actuator_command"
+MESSAGE_TYPE_SIMULATION_STOP = "simulation_stop"
 
 
 # ---------------------------------------------------------------------
@@ -495,6 +502,7 @@ def make_actuator_command(
     rudder_deg: float,
     timestamp_ns: Optional[int] = None,
     validity_ns: int = DEFAULT_COMMAND_VALIDITY_NS,
+    state_sequence: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Construct an actuator-command message.
@@ -529,6 +537,9 @@ def make_actuator_command(
             "rudder_deg": rudder_deg,
         },
     }
+
+    if state_sequence is not None:
+        message["state_sequence"] = state_sequence
 
     validate_actuator_command_or_raise(
         message,
@@ -600,6 +611,9 @@ def validate_actuator_command_or_raise(
         raise MessageValidationError(
             "'sequence' cannot be negative"
         )
+
+    if "state_sequence" in message and _require_integer(message, "state_sequence") < 0:
+        raise MessageValidationError("'state_sequence' cannot be negative")
 
     timestamp = _require_integer(
         message,
@@ -679,6 +693,26 @@ def validate_actuator_command_or_raise(
             raise MessageValidationError(
                 "Actuator command has expired"
             )
+
+
+def make_simulation_stop(*, state_sequence: int) -> Dict[str, Any]:
+    """Ask a synchronized simulator to finish at a control boundary."""
+    message = {
+        "type": MESSAGE_TYPE_SIMULATION_STOP,
+        "version": PROTOCOL_VERSION,
+        "state_sequence": state_sequence,
+    }
+    validate_simulation_stop_or_raise(message)
+    return message
+
+
+def validate_simulation_stop_or_raise(message: Any) -> None:
+    if not isinstance(message, dict) or message.get("type") != MESSAGE_TYPE_SIMULATION_STOP:
+        raise MessageValidationError("Incorrect simulation stop message")
+    if message.get("version") != PROTOCOL_VERSION:
+        raise MessageValidationError("Unsupported protocol version")
+    if _require_integer(message, "state_sequence") < 0:
+        raise MessageValidationError("'state_sequence' cannot be negative")
 
 
 # =====================================================================

@@ -7,7 +7,8 @@ import time
 
 from common.ipc import MAX_MESSAGE_SIZE, UnixSeqPacketServer
 from common.messages import (
-    command_is_expired, get_actuator_values, validate_actuator_command_or_raise,
+    MESSAGE_TYPE_SIMULATION_STOP, command_is_expired, get_actuator_values,
+    validate_actuator_command_or_raise, validate_simulation_stop_or_raise,
 )
 
 
@@ -62,18 +63,22 @@ class CommandReceiver:
         self.invalid_packets = 0
         self._connection = None
         self._sequence = -1
+        self.stop_requested = False
 
-    def poll(self, server: SimulatorServer, *, now_ns=None, enabled=True):
+    def poll(self, server: SimulatorServer, *, now_ns=None, enabled=True, expected_state_sequence=None):
         """Hold the newest valid command until its monotonic wall-clock expiry.
 
         Poll at most 64 packets per tick so a busy sender cannot starve physics.
         Scenario mode drains commands but does not use them.
+        Synchronized mode accepts only commands or stop messages for the
+        current boundary state.
         """
         if now_ns is None:
             now_ns = time.monotonic_ns()
         if self._connection is not server.connection:
             self.command = None
             self._sequence = -1
+            self.stop_requested = False
             self._connection = server.connection
         for _ in range(64):
             if server.connection is None:
@@ -96,7 +101,15 @@ class CommandReceiver:
                 if flags & socket.MSG_TRUNC:
                     raise ValueError("Truncated command")
                 command = json.loads(payload.decode("utf-8"))
+                if isinstance(command, dict) and command.get("type") == MESSAGE_TYPE_SIMULATION_STOP:
+                    validate_simulation_stop_or_raise(command)
+                    if expected_state_sequence is None or command["state_sequence"] != expected_state_sequence:
+                        raise ValueError("Stop does not match the current control boundary")
+                    self.stop_requested = True
+                    continue
                 validate_actuator_command_or_raise(command, check_expiry=True, now_ns=now_ns)
+                if expected_state_sequence is not None and command.get("state_sequence") != expected_state_sequence:
+                    raise ValueError("Command does not match the current control boundary")
                 if command["sequence"] <= self._sequence:
                     raise ValueError("Out-of-order command")
             except (ValueError, OverflowError, RecursionError):

@@ -280,6 +280,12 @@ Execution defaults to accelerated: no wall-clock pacing. The default
 simulation frequency is 100 Hz, `dt = 0.01 s`; publication runs as fast as
 the simulation can advance. Physics time is always `step * dt`.
 Use `--real-time` for wall-clock pacing with absolute monotonic deadlines.
+For a separate accelerated controller, `--sync-controller --control-period 0.05`
+pauses at every fifth 100 Hz step until a matching actuator command arrives
+over the shared Unix IPC socket. It publishes the initial state at time zero
+and all intermediate 100 Hz states. Only external-controller mode supports
+this option; ordinary accelerated and real-time runs keep their existing
+behavior. See `controller/README.md` for the controller service and UI.
 An overrun increments a counter and subsequent steps catch up without
 skipping physics steps. `--fast` explicitly selects the default accelerated
 mode; it cannot be combined with `--real-time`. In Python, pass `fast=False`
@@ -381,9 +387,11 @@ IPC state publication remains active, so a separate viewer can observe them.
 ## IPC contract
 
 The service listens at `/tmp/sub-simulator.sock` by default and accepts one
-active controller connection. It continues integration with zero commands
-until a controller connects, after disconnection, or after command expiry.
-Controllers can reconnect without restarting the simulation. Commands are
+active controller connection. In ordinary mode it continues integration with
+zero commands until a controller connects, after disconnection, or after
+command expiry. Controllers can reconnect without restarting an ordinary run.
+Synchronized accelerated mode instead waits for a matching command at each
+control boundary and fails on timeout or disconnection. Commands are
 held between updates; malformed or expired packets do not erase the last
 still-valid command. Sequence numbers must increase within a connection and
 may restart on reconnection. Each tick processes at most 64 incoming packets

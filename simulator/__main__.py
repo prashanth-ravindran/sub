@@ -18,6 +18,10 @@ def main():
     pacing.add_argument("--real-time", action="store_false", dest="fast", help="Pace simulation steps to wall-clock time")
     parser.add_argument("--scenario", choices=SCENARIOS)
     parser.add_argument("--socket", default="/tmp/sub-simulator.sock", dest="socket_path")
+    parser.add_argument("--sync-controller", action="store_true", dest="synchronize_controller",
+                        help="Accelerated lockstep with a controller over IPC")
+    parser.add_argument("--control-period", type=float, default=0.05, dest="control_period_s")
+    parser.add_argument("--controller-timeout", type=float, default=10.0, dest="controller_timeout_s")
     parser.add_argument("--output", help="Write state CSV; must be a new file")
     parser.add_argument("--initial-depth", type=float, default=50.0, help="Metres below surface")
     parser.add_argument("--latitude", type=float, default=13.0, help="NED origin latitude in degrees")
@@ -30,7 +34,7 @@ def main():
             previous[signum] = signal.signal(signum, lambda *_: stopped.set())
         stats = run_simulator(**vars(args), stop_event=stopped)
         print(json.dumps(stats, sort_keys=True))
-    except (ValueError, OSError, FloatingPointError) as exc:
+    except (ValueError, OSError, FloatingPointError, TimeoutError, ConnectionError) as exc:
         parser.exit(1, f"Simulator stopped: {exc}\n")
     finally:
         for signum, handler in previous.items():

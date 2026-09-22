@@ -130,7 +130,7 @@ class UnixSeqPacketClient:
         self.retry_interval = retry_interval
         self.socket: Optional[socket.socket] = None
 
-    def connect(self):
+    def connect(self, timeout_s=None):
         self.socket = socket.socket(
             socket.AF_UNIX,
             socket.SOCK_SEQPACKET,
@@ -138,13 +138,20 @@ class UnixSeqPacketClient:
 
         print(f"[IPC] Connecting to simulator at {self.socket_path}")
 
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
         while True:
             try:
                 self.socket.connect(self.socket_path)
                 break
 
             except (FileNotFoundError, ConnectionRefusedError):
-                time.sleep(self.retry_interval)
+                if deadline is not None and time.monotonic() >= deadline:
+                    self.close()
+                    self.socket = None
+                    raise TimeoutError(f"Simulator socket unavailable: {self.socket_path}")
+                time.sleep(self.retry_interval if deadline is None else min(
+                    self.retry_interval, max(0.0, deadline - time.monotonic())
+                ))
 
         self.socket.setblocking(False)
 
