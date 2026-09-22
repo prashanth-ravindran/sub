@@ -1,5 +1,44 @@
 # sub
 
+## Getting started
+
+On a fresh Linux machine, install Python and the virtual-environment support
+first:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv
+```
+
+The startup scripts create `.venv` automatically and install the pinned
+packages from `requirements.txt` before launching the services. The first run
+can take a few minutes while the virtual environment and scientific Python
+dependencies are created. Later runs reuse the environment and are much
+faster.
+
+To run the vehicle simulator and its Streamlit UI:
+
+```bash
+scripts/start_vehicle_simulator.sh
+```
+
+Open the simulator UI at `http://127.0.0.1:8501`. Its local API listens on
+port `8765`.
+
+To run the controller and its Streamlit UI:
+
+```bash
+scripts/start_controller.sh
+```
+
+Open the controller UI at `http://127.0.0.1:8502`. Its local API listens on
+port `8766`; submitting a mission starts a dedicated simulator process and
+connects to it over the Unix IPC socket.
+
+The scripts support `PYTHON_BIN`, `CONTROLLER_API_PORT`,
+`CONTROLLER_UI_PORT`, `SIMULATOR_API_PORT`, and `SIMULATOR_UI_PORT` environment
+overrides. Stop the script with Ctrl+C to stop both processes it started.
+
 Why SOCK_SEQPACKET?
 
 - Preserves message boundaries. Each send() corresponds to one packet at the receiver. With SOCK_STREAM, you only get a byte stream and must implement your own framing.
