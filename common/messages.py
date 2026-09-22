@@ -478,16 +478,10 @@ def validate_vehicle_state_or_raise(
     # Depth
     # ------------------------------------------------------------
 
-    depth = _require_finite_number(
+    _require_finite_number(
         message,
         "depth_m",
     )
-
-    # Negative depth should normally not occur in this simulation.
-    if depth < 0:
-        raise MessageValidationError(
-            "'depth_m' cannot be negative"
-        )
 
 
 # =====================================================================

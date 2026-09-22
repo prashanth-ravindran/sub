@@ -148,3 +148,36 @@ def test_manual_stop_before_first_state_finishes_cleanly():
         assert manager.result_path(started["run_id"]).exists()
     finally:
         manager.close()
+
+
+@pytest.mark.parametrize("controller_type", ["pid", "lqr", "lqi"])
+def test_default_surface_mission_arrives_with_bounded_commands(controller_type):
+    manager = RunManager()
+    try:
+        started = manager.start({"controller_type": controller_type})
+        manager._worker.join(timeout=180)
+        status = manager.status(started["run_id"])
+        assert status["status"] == "completed", status
+        assert status["completion_reason"] == "goal"
+        assert manager._run["process"].poll() == 0
+        with manager.result_path(started["run_id"]).open() as handle:
+            rows = [{key: float(value) for key, value in row.items()} for row in csv.DictReader(handle)]
+        first, final = rows[0], rows[-1]
+        assert all(first[key] == 0 for key in (
+            "time_s", "north_m", "east_m", "depth_m", "surge_speed_mps",
+            "v_mps", "w_mps", "p_radps", "q_radps", "r_radps",
+        ))
+        assert rows[1]["depth_m"] > 0
+        assert final["distance_to_target_m"] <= 15.0
+        assert abs(final["depth_m"] - 10.0) < 0.1
+        assert abs(final["surge_speed_mps"] - 1.5) < 0.05
+        assert abs((final["heading_deg"] - final["heading_setpoint_deg"] + 180) % 360 - 180) < 1
+        assert all(row["depth_m"] >= 0 for row in rows)
+        assert all(0 <= row["rpm"] <= 3000 for row in rows)
+        assert all(abs(row["elevator_deg"]) <= 20 and abs(row["rudder_deg"]) <= 20 for row in rows)
+        assert all(b["state_sequence"] - a["state_sequence"] == 5 for a, b in zip(rows, rows[1:]))
+        print(json.dumps({"controller": controller_type, "arrival_s": final["time_s"],
+                          "depth_m": final["depth_m"], "speed_mps": final["surge_speed_mps"],
+                          "range_m": final["distance_to_target_m"]}))
+    finally:
+        manager.close()

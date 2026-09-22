@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from simulator.simulation.integrator import rk4_step, step_vehicle
-from simulator.vehicle.kinematics import quaternion_from_euler
 from simulator.vehicle.parameters import VehicleParameters
+from simulator.ipc.messages import state_message
 
 
 def test_rk4_fourth_order_convergence_and_non_autonomous_rhs():
@@ -51,11 +51,26 @@ def test_invalid_timesteps_are_rejected(dt):
         rk4_step(lambda t, x: x, 0, [1], dt)
 
 
-def test_nonfinite_derivatives_and_surface_crossing_fail_clearly():
+def test_nonfinite_derivatives_fail_clearly():
     with pytest.raises(ValueError, match="derivative"):
         rk4_step(lambda t, x: [np.nan], 0, [1], 0.01)
+
+
+def test_cg_starts_at_waterline_and_can_cross_it_without_clamping():
     state = np.zeros(13)
-    state[3:7] = quaternion_from_euler(0, 0.3, 0)
-    state[7] = 1
-    with pytest.raises(ValueError, match="surface"):
-        step_vehicle(state, [0, 0, 0], 0, 0.01, VehicleParameters())
+    state[3] = 1
+    parameters = VehicleParameters()
+    sinking = step_vehicle(state, [0, 0, 0], 0, 0.01, parameters)
+    assert sinking[2] > 0
+    assert sinking[9] > 0
+    np.testing.assert_array_equal(sinking[[0, 1, 7, 8, 10, 11, 12]], np.zeros(7))
+    state[9] = -1.0
+    rising = step_vehicle(state, [0, 0, 0], 0, 0.01, parameters)
+    assert rising[2] < 0
+    assert rising[9] < 0
+    message = state_message(rising, 1, 0.01)
+    assert message["depth_m"] == message["position"]["down_m"] == rising[2]
+    for step in range(1, 501):
+        rising = step_vehicle(rising, [0, 0, 0], step * 0.01, 0.01, parameters)
+    assert rising[2] > 0
+    assert np.all(np.isfinite(rising))

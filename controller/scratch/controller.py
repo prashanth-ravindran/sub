@@ -352,7 +352,6 @@ def run_closed_loop(mission, duration, dt, controller_type="pid"):
 
     vehicle = AUV()
     state = np.zeros(13)
-    state[2] = 0.1
     state[3] = 1.0
     previous_u = 0.0
     rows = []

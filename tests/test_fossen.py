@@ -11,6 +11,8 @@ from simulator.scenarios import SCENARIOS
 from simulator.simulation.simulator import run_simulator
 from simulator.vehicle.actuators import actuator_forces
 from simulator.vehicle.parameters import VehicleParameters
+from simulator.simulation.integrator import step_vehicle
+from simulator.vehicle.kinematics import quaternion_from_euler
 
 
 SCENARIO_NAMES = {
@@ -27,6 +29,7 @@ STATE_COLUMNS = (
 
 def test_all_reference_coefficients_match_vehicle_parameters():
     reference, parameters = fossen.P(), VehicleParameters()
+    assert reference.hull_length_m == parameters.hull_length_m
     assert (
         reference.rho, reference.g, reference.mass,
         reference.Ixx, reference.Iyy, reference.Izz, reference.cb_z,
@@ -101,8 +104,15 @@ def test_actuator_units_limits_reverse_flow_and_surface_boundary_match():
             vehicle.actuator_wrench(np.zeros(6), *command)
     state = fossen.zero_state()
     state[2], state[9] = 0, -1
-    with pytest.raises(ValueError, match="surface"):
-        vehicle.step_rk4(state, fossen.scenario_command("thrust", 0), 0.01)
+    command = fossen.scenario_command("thrust", 0)
+    for depth in (-0.1, 0.0, 0.1, 0.5, 10.0):
+        state[2] = depth
+        for pitch in (0.0, 0.3, -0.3):
+            state[3:7] = quaternion_from_euler(0.2, pitch, 0.7)
+            np.testing.assert_allclose(
+                vehicle.step_rk4(state, command, 0.01),
+                step_vehicle(state, [0, 0, 0], 0, 0.01, parameters), atol=1e-12,
+            )
 
 
 @pytest.mark.parametrize("kwargs", [{"duration": 0}, {"dt": -1}, {"duration": np.nan}, {"dt": np.inf}])

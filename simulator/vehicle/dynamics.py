@@ -28,6 +28,6 @@ def state_derivative(
     mass = mass_matrix(parameters) + added_mass_matrix(parameters)
     coriolis = coriolis_matrix(nu, parameters) + added_mass_coriolis_matrix(nu, parameters)
     rhs = tau - coriolis @ nu - damping_vector(nu, parameters)
-    rhs -= restoring_vector(quaternion, parameters)
+    rhs -= restoring_vector(quaternion, parameters, state[2])
     nu_dot = np.linalg.solve(mass, rhs)
     return np.concatenate((position_dot, quaternion_dot, nu_dot))

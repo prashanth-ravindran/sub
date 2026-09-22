@@ -47,6 +47,7 @@ def test_total_mass_is_symmetric_positive_definite():
     ("water_density_kg_m3", 0), ("propeller_thrust_coefficient", -1),
     ("elevator_area_m2", 0), ("rudder_area_m2", np.inf),
     ("fin_lift_slope_per_rad", 0), ("fin_x_m", 0.8),
+    ("hull_length_m", 0), ("hull_length_m", -1), ("hull_length_m", np.nan),
 ])
 def test_invalid_physical_parameters_are_rejected(field, value):
     with pytest.raises(ValueError):

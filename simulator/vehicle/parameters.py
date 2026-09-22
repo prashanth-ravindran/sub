@@ -38,12 +38,13 @@ class VehicleParameters:
     rudder_area_m2: float = 0.02
     fin_lift_slope_per_rad: float = 4.0
     fin_x_m: float = -0.8
+    hull_length_m: float = 2.0
 
     def __post_init__(self) -> None:
         for name in (
             "mass_kg", "cb_height_m", "gravity_mps2", "water_density_kg_m3",
             "propeller_thrust_coefficient", "elevator_area_m2", "rudder_area_m2",
-            "fin_lift_slope_per_rad", "fin_x_m",
+            "fin_lift_slope_per_rad", "fin_x_m", "hull_length_m",
         ):
             value = np.asarray(getattr(self, name), dtype=float)
             if value.shape != () or not np.isfinite(value):

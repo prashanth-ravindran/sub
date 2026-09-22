@@ -3,26 +3,29 @@
 import numpy as np
 from numpy.typing import ArrayLike
 
+from simulator.scratch.fossen import submerged_ellipsoid
+
 from .kinematics import body_to_ned_matrix
 from .parameters import VehicleParameters
 
 
 def restoring_vector(
-    quaternion: ArrayLike, parameters: VehicleParameters
+    quaternion: ArrayLike, parameters: VehicleParameters, depth_m: float
 ) -> np.ndarray:
     """Return Fossen's g, the negative of physical weight/buoyancy forces.
 
-    g belongs on the left of M nu_dot + C nu + g = tau. The BODY origin
-    is CG, so weight has no lever arm. Neutral buoyancy holds at all attitudes.
     """
     rotation = body_to_ned_matrix(quaternion)
+    fraction, cb_body = submerged_ellipsoid(
+        depth_m, rotation[2], parameters.hull_length_m,
+        parameters.mass_kg / parameters.water_density_kg_m3,
+        -parameters.cb_height_m,
+    )
     # Calculate weight.
     weight_ned = np.array([0.0, 0.0, parameters.mass_kg * parameters.gravity_mps2])
     # weight into the vehicle’s coordinate frame.
     weight_body = rotation.T @ weight_ned
-    # This implements neutral buoyancy
-    buoyancy_body = -weight_body
-    cb_body = np.array([0.0, 0.0, -parameters.cb_height_m])
+    buoyancy_body = -weight_body * fraction
     # Torque = lever arm × force
     moment_body = np.cross(cb_body, buoyancy_body)
     # -ve as it acts against a induced roll

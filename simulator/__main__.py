@@ -23,7 +23,8 @@ def main():
     parser.add_argument("--control-period", type=float, default=0.05, dest="control_period_s")
     parser.add_argument("--controller-timeout", type=float, default=10.0, dest="controller_timeout_s")
     parser.add_argument("--output", help="Write state CSV; must be a new file")
-    parser.add_argument("--initial-depth", type=float, default=50.0, help="Metres below surface")
+    parser.add_argument("--initial-depth", type=float, default=50.0,
+                        help="CG depth below waterline [m]; 0 starts at the waterline, at rest")
     parser.add_argument("--latitude", type=float, default=13.0, help="NED origin latitude in degrees")
     parser.add_argument("--longitude", type=float, default=80.0, help="NED origin longitude in degrees")
     args = parser.parse_args()

@@ -22,6 +22,7 @@ def test_level_rest_is_equilibrium():
 
 def test_applied_forces_and_moments_give_expected_accelerations_without_mutation():
     state = np.zeros(13)
+    state[2] = 10.0
     state[3] = 1
     tau = np.array([84, 168, 252, 0.7, 50, 75])
     original_state, original_tau = state.copy(), tau.copy()
@@ -50,6 +51,7 @@ def test_tilted_rest_accelerates_toward_level():
     parameters = rigid_body_parameters()
     roll, pitch = 0.1, -0.2
     state = np.zeros(13)
+    state[2] = 10.0
     state[3:7] = quaternion_from_euler(roll, pitch, 0.7)
     derivative = state_derivative(state, np.zeros(6), parameters)
     stiffness = parameters.mass_kg * parameters.gravity_mps2 * parameters.cb_height_m

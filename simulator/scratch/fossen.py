@@ -112,6 +112,31 @@ def q_to_euler(q):
     return np.array([roll, pitch, yaw])
 
 
+def submerged_ellipsoid(depth_m, down_body, length_m, volume_m3, cb_z):
+    if not all(math.isfinite(value) for value in (depth_m, length_m, volume_m3, cb_z)):
+        raise ValueError("Hull geometry and CG depth must be finite")
+    if length_m <= 0 or volume_m3 <= 0:
+        raise ValueError("Hull length and volume must be positive")
+    down_body = np.asarray(down_body, dtype=float)
+    if (down_body.shape != (3,) or not np.all(np.isfinite(down_body))
+            or not math.isclose(float(down_body @ down_body), 1.0, abs_tol=1e-12)):
+        raise ValueError("BODY down direction must be a finite unit vector")
+    center = np.array([0.0, 0.0, cb_z])
+    half_length = length_m / 2.0
+    radius_squared = 3.0 * volume_m3 / (4.0 * math.pi * half_length)
+    axes_squared = np.array([half_length**2, radius_squared, radius_squared])
+    vertical_radius = math.sqrt(float((axes_squared * down_body) @ down_body))
+    immersion = (depth_m + down_body @ center) / vertical_radius
+    if immersion >= 1.0:
+        return 1.0, center
+    if immersion <= -1.0:
+        return 0.0, center
+    fraction = (2.0 - immersion) * (1.0 + immersion)**2 / 4.0
+    centroid_offset = 3.0 * (1.0 - immersion)**2 / (4.0 * (2.0 - immersion))
+    center += centroid_offset * axes_squared * down_body / vertical_radius
+    return fraction, center
+
+
 def ned_to_latlon(north, east, lat0_deg, lon0_deg):
     """Flat-Earth conversion using fixed metres-to-degrees scales at the origin."""
     if not all(math.isfinite(v) for v in (north, east, lat0_deg, lon0_deg)):
@@ -181,6 +206,8 @@ class P:
     elevator_x: float = -0.80
     rudder_x: float = -0.80
 
+    hull_length_m: float = 2.0
+
 
 # ---------------------------------------------------------------------------
 # 6-DOF vehicle
@@ -212,8 +239,6 @@ class AUV:
             p.quad_u, p.quad_v, p.quad_w,
             p.quad_p, p.quad_q, p.quad_r,
         ])
-
-        self.r_cb = np.array([0.0, 0.0, p.cb_z])
 
         # Stage 3: exactly neutral buoyancy.
         self.W = p.mass * p.g
@@ -253,21 +278,22 @@ class AUV:
         """
         return np.diag(self.dlin + self.dquad*np.abs(nu))
 
-    def hydrostatic_wrench(self, q):
+    def hydrostatic_wrench(self, q, depth_m):
         """
         Stage 3: gravity + buoyancy in BODY coordinates.
 
-        W == B, so net hydrostatic force is zero.
-        Because CB is above CG, attitude displacement creates a restoring
-        roll/pitch moment.
         """
         R_nb = q_to_R(q).T  # NED -> BODY
+        fraction, center = submerged_ellipsoid(
+            depth_m, R_nb[:, 2], self.p.hull_length_m,
+            self.p.mass / self.p.rho, self.p.cb_z,
+        )
 
         weight_b = R_nb @ np.array([0.0, 0.0, self.W])
-        buoyancy_b = R_nb @ np.array([0.0, 0.0, -self.B])
+        buoyancy_b = R_nb @ np.array([0.0, 0.0, -self.B * fraction])
 
         force = weight_b + buoyancy_b
-        moment = np.cross(self.r_cb, buoyancy_b)  # weight acts at CG
+        moment = np.cross(center, buoyancy_b)
 
         return np.r_[force, moment]
 
@@ -340,7 +366,7 @@ class AUV:
             self.actuator_wrench(
                 nu, cmd["rpm"], cmd["elevator_deg"], cmd["rudder_deg"]
             )
-            + self.hydrostatic_wrench(q)
+            + self.hydrostatic_wrench(q, state[2])
         )
 
         rhs = tau - C @ nu - self.D(nu) @ nu
@@ -352,8 +378,6 @@ class AUV:
         """Stage 6: one classical RK4 step."""
         if not math.isfinite(dt) or dt <= 0:
             raise ValueError("dt must be finite and positive")
-        if state[2] < 0:
-            raise ValueError("Vehicle is above the water surface")
         f = self.derivative
         k1 = f(state, cmd)
         k2 = f(state + 0.5*dt*k1, cmd)
@@ -364,8 +388,6 @@ class AUV:
         new_state[3:7] = q_normalize(new_state[3:7])
         if not np.all(np.isfinite(new_state)):
             raise ValueError("Integrated state must be finite")
-        if new_state[2] < 0:
-            raise ValueError("Vehicle crossed the water surface; submerged model no longer applies")
         return new_state
 
 

@@ -34,8 +34,6 @@ def step_vehicle(
 ) -> np.ndarray:
     """Integrate one submerged-vehicle step, recomputing forces at each RK stage."""
     state = _vector(state, 13, "state")
-    if state[2] < 0:
-        raise ValueError("Vehicle is above the water surface")
     actuators = _vector(actuators, 3, "actuators").copy()
 
     def rhs(t, intermediate):
@@ -45,6 +43,4 @@ def step_vehicle(
     with np.errstate(over="raise", invalid="raise", divide="raise"):
         result = rk4_step(rhs, time_s, state, dt)
     result[3:7] = normalize_quaternion(result[3:7])
-    if result[2] < 0:
-        raise ValueError("Vehicle crossed the water surface; submerged model no longer applies")
     return result
