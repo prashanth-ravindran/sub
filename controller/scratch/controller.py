@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Self-contained 6-DOF AUV + waypoint PID controller demonstration.
+"""Self-contained waypoint PID controller + LQR controller. Uses the 6 DOF AUV model 
+from the simulator package
 
 The simulator and controller run as separate OS processes.  They exchange
 telemetry and actuator commands over a bidirectional multiprocessing Pipe,
