@@ -293,49 +293,38 @@ scenario responses, UI/API operation, and model limitations.
 
 ## Controller
 
-The controller is a waypoint-following autopilot for a torpedo-shaped autonomous
-underwater vehicle (AUV). It drives the vehicle toward a target
-latitude/longitude while maintaining a requested depth and forward speed.
+The separate controller process guides the AUV from a start latitude/longitude
+to a waypoint while tracking the requested depth and forward (surge) speed.
+The default mission starts level and at rest with the vehicle's centre of
+gravity at the waterline (zero depth). Its target is about 567 m away, with a
+10 m depth, 1.5 m/s surge-speed setpoint, and 15 m arrival radius.
 
-It controls three actuators:
+At each 20 Hz control boundary, waypoint guidance converts the target to a
+local north/east displacement and computes the bearing to it. Heading error
+is wrapped to the shortest turn. The selected control law then commands:
 
 | Objective | Feedback | Controlled actuator |
 |---|---|---|
-| Forward speed | Surge velocity and acceleration | Propeller RPM |
-| Depth and pitch | Depth, depth rate, pitch, pitch rate | Elevator |
-| Heading toward waypoint | Position, yaw, yaw rate | Rudder |
+| Forward speed | Surge velocity and acceleration (PID); model state (LQR/LQI) | Propeller RPM |
+| Depth and pitch | Depth, depth rate, pitch, pitch rate (PID); model state (LQR/LQI) | Elevator |
+| Heading toward waypoint | Position, yaw, yaw rate (PID); model state (LQR/LQI) | Rudder |
 
-  ### Controller - How it works
+| Mode | Control design |
+| --- | --- |
+| PID | Cascaded depth-to-pitch control, plus heading and speed loops with integral correction and a steady-drag RPM feed-forward term. |
+| LQR | One discrete state-feedback law, linearized about level submerged cruise using the simulator-owned Fossen derivative. It has no integral states. |
+| LQI | The same model-based design augmented with depth, surge-speed, and heading integrators to reduce steady offsets from model error or actuator bias. |
 
-  1. Waypoint guidance
-
-     The target latitude/longitude is converted into local north/east coordinates. Each cycle, the controller calculates:
-      - Remaining north and east distance
-      - Horizontal distance to the waypoint
-      - Desired heading using atan2(east_error, north_error)
-
-  2. Depth control
-
-     This is a cascaded controller:
-
-     depth error → desired pitch → elevator command
-
-     The depth PID converts the difference between requested and actual depth into a pitch setpoint. The pitch PID then uses pitch error and
-     pitch rate to command the elevator.
-
-  3. Heading control
-
-     The desired heading is compared with the current yaw. The error is wrapped into [-π, π], ensuring the vehicle takes the shortest turn. A
-     PID controller then converts this error and yaw rate into a rudder command.
-
-  4. Speed control
-
-     The speed controller combines two terms:
-      - Feed-forward RPM calculated from the shared Fossen model’s expected drag at the requested speed
-      - PID correction based on surge-speed error and acceleration
-
-     The feed-forward term provides approximately the thrust required to maintain speed, while the PID handles disturbances and transient
-     errors.
+Actuators are limited to 0–3000 RPM and ±20° for each fin pair. The simulator
+integrates at a selected 60, 80, or 100 Hz (100 Hz by default), while the
+controller remains at 20 Hz. Arrival means horizontal distance to the target
+is at most 15 m by default; it does not require simultaneous depth or speed
+convergence. The controller UI plots setpoints, responses, commands, and the
+horizontal track after each completed run. Both controller and simulator CSVs
+are available for download. See the [controller README](controller/README.md) for
+the control equations, gain rationale, run instructions, sample results, tests,
+and limitations; see [IPC](#inter-process-communication-ipc) for the packet
+schema and synchronization rules.
 
 # References
 
