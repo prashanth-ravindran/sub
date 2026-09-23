@@ -70,6 +70,9 @@ def test_ipc_telemetry_matches_scratch_body_to_ned_conversion():
     {"mission": {"arrival_radius_m": 1e9}},
     {"mission": {"speed_mps": 0}},
     {"mission": {"start_lon": float("nan")}},
+    {"simulator_frequency_hz": 50},
+    {"simulator_frequency_hz": True},
+    {"simulator_frequency_hz": "60"},
 ])
 def test_invalid_controller_runs_are_rejected_before_start(payload):
     with pytest.raises(ValueError):

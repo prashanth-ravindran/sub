@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,7 +12,7 @@ import time
 from uuid import uuid4
 
 from .config import (
-    CONTROL_DT, CONTROLLER_TIMEOUT_S, INITIAL_DEPTH_M, SIMULATOR_HZ,
+    CONTROL_DT, CONTROLLER_TIMEOUT_S, INITIAL_DEPTH_M,
     validate_run,
 )
 from .ipc import ControllerLink, telemetry_from_message
@@ -41,13 +42,18 @@ class RunManager:
 
     @staticmethod
     def _public(run):
+        process = run["process"]
         return {key: run[key] for key in (
             "run_id", "status", "completion_reason", "error", "mission",
-            "controller_type", "duration_s", "latest",
-        )}
+            "controller_type", "duration_s", "simulator_frequency_hz", "latest",
+        )} | {
+            "controller_pid": os.getpid(),
+            "simulator_pid": None if process is None else process.pid,
+            "simulator_running": process is not None and process.poll() is None,
+        }
 
     def start(self, payload):
-        mission, kind, duration_s = validate_run(payload)
+        mission, kind, duration_s, frequency_hz = validate_run(payload)
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
                 raise ConflictError("A controller run is already active")
@@ -59,7 +65,8 @@ class RunManager:
             run = {
                 "run_id": run_id, "status": "running", "completion_reason": None,
                 "error": None, "mission": asdict(mission), "controller_type": kind,
-                "duration_s": duration_s, "latest": None,
+                "duration_s": duration_s, "simulator_frequency_hz": frequency_hz,
+                "latest": None,
                 "controller_csv": directory / f"{run_id}-controller.csv",
                 "simulator_csv": directory / f"{run_id}-simulator.csv",
                 "socket_path": directory / f"{run_id}.sock",
@@ -112,7 +119,7 @@ class RunManager:
     def _simulator_command(run, mission):
         return [
             sys.executable, "-m", "simulator", "--fast", "--sync-controller",
-            "--frequency", str(SIMULATOR_HZ), "--control-period", str(CONTROL_DT),
+            "--frequency", str(run["simulator_frequency_hz"]), "--control-period", str(CONTROL_DT),
             "--controller-timeout", str(CONTROLLER_TIMEOUT_S),
             "--duration", str(run["duration_s"]),
             "--initial-depth", str(INITIAL_DEPTH_M),
@@ -135,8 +142,8 @@ class RunManager:
             link.connect(timeout_s=CONTROLLER_TIMEOUT_S)
             logger = RunLogger(run["controller_csv"])
             previous_sequence, previous_u = -1, 0.0
-            control_steps = round(SIMULATOR_HZ * CONTROL_DT)
-            max_steps = math.ceil(run["duration_s"] * SIMULATOR_HZ - 1e-12)
+            control_steps = round(run["simulator_frequency_hz"] * CONTROL_DT)
+            max_steps = math.ceil(run["duration_s"] * run["simulator_frequency_hz"] - 1e-12)
             while True:
                 state = self._next_state(
                     link, process, time.monotonic() + CONTROLLER_TIMEOUT_S,

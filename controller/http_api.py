@@ -10,7 +10,7 @@ import signal
 import threading
 from urllib.parse import urlsplit
 
-from .config import API_PORT, CONTROLLERS, CONTROL_DT, SIMULATOR_HZ, run_defaults
+from .config import API_PORT, CONTROLLERS, CONTROL_DT, SIMULATOR_FREQUENCIES_HZ, SIMULATOR_HZ, run_defaults
 from .controller import ConflictError, RunManager
 
 
@@ -52,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "run_defaults": run_defaults(), "controllers": CONTROLLERS,
                 "control_period_s": CONTROL_DT, "simulator_frequency_hz": SIMULATOR_HZ,
+                "simulator_frequencies_hz": SIMULATOR_FREQUENCIES_HZ,
+                "controller_pid": os.getpid(),
             })
             return
         match = RUN_ROUTE.fullmatch(path)

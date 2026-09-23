@@ -6,6 +6,7 @@ import math
 from .mission import Mission
 
 SIMULATOR_HZ = 100.0
+SIMULATOR_FREQUENCIES_HZ = (60, 80, 100)
 CONTROL_DT = 0.05
 DURATION_S = 450.0
 INITIAL_DEPTH_M = 0.0
@@ -17,13 +18,16 @@ CONTROLLERS = ("pid", "lqr", "lqi")
 
 
 def run_defaults():
-    return {"mission": asdict(Mission()), "controller_type": "pid", "duration_s": DURATION_S}
+    return {
+        "mission": asdict(Mission()), "controller_type": "pid",
+        "duration_s": DURATION_S, "simulator_frequency_hz": SIMULATOR_HZ,
+    }
 
 
 def validate_run(payload):
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
-    if payload.keys() - {"mission", "controller_type", "duration_s"}:
+    if payload.keys() - {"mission", "controller_type", "duration_s", "simulator_frequency_hz"}:
         raise ValueError("Unknown run setting")
     mission_data = payload.get("mission", {})
     if not isinstance(mission_data, dict):
@@ -43,6 +47,9 @@ def validate_run(payload):
     duration_s = payload.get("duration_s", DURATION_S)
     if isinstance(duration_s, bool) or not isinstance(duration_s, (int, float)) or not math.isfinite(duration_s) or duration_s <= 0:
         raise ValueError("duration_s must be finite and positive")
-    if not math.isfinite(duration_s * SIMULATOR_HZ):
+    frequency_hz = payload.get("simulator_frequency_hz", SIMULATOR_HZ)
+    if isinstance(frequency_hz, bool) or frequency_hz not in SIMULATOR_FREQUENCIES_HZ:
+        raise ValueError("simulator_frequency_hz must be 60, 80, or 100")
+    if not math.isfinite(duration_s * frequency_hz):
         raise ValueError("duration_s produces too many simulator steps")
-    return mission, controller_type, float(duration_s)
+    return mission, controller_type, float(duration_s), int(frequency_hz)

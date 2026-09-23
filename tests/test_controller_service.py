@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 import threading
 import time
 from urllib.request import Request, urlopen
@@ -70,7 +71,8 @@ def test_synchronized_run_times_out_without_a_controller(tmp_path):
     assert not socket_path.exists()
 
 
-def test_controller_http_run_reaches_horizon_and_exports_both_logs():
+@pytest.mark.parametrize("frequency_hz", [60, 80, 100])
+def test_controller_http_run_reaches_horizon_and_exports_both_logs(frequency_hz):
     server = create_server(port=0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -84,8 +86,16 @@ def test_controller_http_run_reaches_horizon_and_exports_both_logs():
     try:
         config = json.loads(request("GET", "/api/config"))
         assert config["controllers"] == ["pid", "lqr", "lqi"]
-        started = json.loads(request("POST", "/api/runs", {"duration_s": 0.15}))
+        assert config["simulator_frequencies_hz"] == [60, 80, 100]
+        assert config["run_defaults"]["simulator_frequency_hz"] == 100
+        assert config["controller_pid"] == os.getpid()
+        started = json.loads(request("POST", "/api/runs", {
+            "duration_s": 0.15, "simulator_frequency_hz": frequency_hz,
+        }))
         run_id = started["run_id"]
+        assert started["simulator_frequency_hz"] == frequency_hz
+        assert started["simulator_pid"] is None
+        assert not started["simulator_running"]
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             status = json.loads(request("GET", f"/api/runs/{run_id}"))
@@ -93,12 +103,20 @@ def test_controller_http_run_reaches_horizon_and_exports_both_logs():
                 break
             time.sleep(0.02)
         assert status["status"] == "completed", status
+        assert status["simulator_pid"] == server.manager._run["process"].pid
+        assert status["simulator_pid"] != os.getpid()
+        assert status["controller_pid"] == config["controller_pid"]
+        assert not status["simulator_running"]
+        assert server.manager._run["process"].poll() == 0
         assert status["completion_reason"] == "horizon"
-        assert status["latest"]["state"]["sequence"] == 15
+        control_steps = frequency_hz // 20
+        assert status["latest"]["state"]["sequence"] == 3 * control_steps
         control_csv = request("GET", f"/api/runs/{run_id}/csv").decode().splitlines()
         state_csv = request("GET", f"/api/runs/{run_id}/state-csv").decode().splitlines()
-        assert [int(row["state_sequence"]) for row in csv.DictReader(control_csv)] == [0, 5, 10, 15]
-        assert len(list(csv.DictReader(state_csv))) == 15
+        assert [int(row["state_sequence"]) for row in csv.DictReader(control_csv)] == [
+            0, control_steps, 2 * control_steps, 3 * control_steps,
+        ]
+        assert len(list(csv.DictReader(state_csv))) == 3 * control_steps
     finally:
         server.shutdown()
         server.manager.close()
@@ -127,6 +145,8 @@ def test_controller_service_stops_simulator_on_goal(controller_type):
             time.sleep(0.02)
         assert status["status"] == "completed", status
         assert status["completion_reason"] == "goal"
+        assert not status["simulator_running"]
+        assert manager._run["process"].poll() == 0
         assert status["latest"]["state"]["simulation_time_s"] < 5
     finally:
         manager.close()
@@ -145,20 +165,26 @@ def test_manual_stop_before_first_state_finishes_cleanly():
             time.sleep(0.02)
         assert status["status"] == "completed", status
         assert status["completion_reason"] == "stopped"
+        assert not status["simulator_running"]
+        assert manager._run["process"].poll() == 0
         assert manager.result_path(started["run_id"]).exists()
     finally:
         manager.close()
 
 
 @pytest.mark.parametrize("controller_type", ["pid", "lqr", "lqi"])
-def test_default_surface_mission_arrives_with_bounded_commands(controller_type):
+@pytest.mark.parametrize("frequency_hz", [60, 80, 100])
+def test_default_surface_mission_arrives_with_bounded_commands(controller_type, frequency_hz):
     manager = RunManager()
     try:
-        started = manager.start({"controller_type": controller_type})
+        started = manager.start({
+            "controller_type": controller_type, "simulator_frequency_hz": frequency_hz,
+        })
         manager._worker.join(timeout=180)
         status = manager.status(started["run_id"])
         assert status["status"] == "completed", status
         assert status["completion_reason"] == "goal"
+        assert status["simulator_frequency_hz"] == frequency_hz
         assert manager._run["process"].poll() == 0
         with manager.result_path(started["run_id"]).open() as handle:
             rows = [{key: float(value) for key, value in row.items()} for row in csv.DictReader(handle)]
@@ -175,7 +201,8 @@ def test_default_surface_mission_arrives_with_bounded_commands(controller_type):
         assert all(row["depth_m"] >= 0 for row in rows)
         assert all(0 <= row["rpm"] <= 3000 for row in rows)
         assert all(abs(row["elevator_deg"]) <= 20 and abs(row["rudder_deg"]) <= 20 for row in rows)
-        assert all(b["state_sequence"] - a["state_sequence"] == 5 for a, b in zip(rows, rows[1:]))
+        assert all(b["state_sequence"] - a["state_sequence"] == frequency_hz // 20
+                   for a, b in zip(rows, rows[1:]))
         print(json.dumps({"controller": controller_type, "arrival_s": final["time_s"],
                           "depth_m": final["depth_m"], "speed_mps": final["surge_speed_mps"],
                           "range_m": final["distance_to_target_m"]}))
