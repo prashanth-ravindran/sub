@@ -48,6 +48,30 @@ origin are configurable. At zero depth the CG is at the waterline and all
 velocities are zero. The simulator allows the CG to cross the waterline
 without clamping its depth; buoyancy changes with the submerged hull volume.
 
+In Fossen's Euler-angle notation, the kinematic Jacobian maps BODY velocities
+to NED position rates and Euler-angle rates:
+
+```math
+\begin{aligned}
+\dot{\boldsymbol\eta} &= \mathbf J(\boldsymbol\eta)\boldsymbol\nu, \\
+\mathbf J(\boldsymbol\eta) &=
+\begin{bmatrix}
+\mathbf R_{zyx}(\phi,\theta,\psi) & \mathbf 0 \\
+\mathbf 0 & \mathbf T_{zyx}(\phi,\theta)
+\end{bmatrix}.
+\end{aligned}
+```
+
+Here $\boldsymbol\eta$ combines NED position and Euler attitude.
+$\mathbf R_{zyx}$ maps BODY linear velocity to NED position rate, while
+$\mathbf T_{zyx}$ maps BODY angular velocity to Euler-angle rate. The Python
+`quaternion_from_euler(roll_rad, pitch_rad, yaw_rad)` helper accepts Euler angles
+to construct a quaternion state; the CLI and API currently start level and do
+not expose an initial-attitude setting. The simulator then integrates
+quaternion rates instead of Euler-angle rates because $\mathbf T_{zyx}$ is
+singular at $\pm90^\circ$ pitch. State packets and CSV rows convert the
+quaternion back to Euler angles for display and control.
+
 Attitude uses Hamilton quaternions in scalar-first order `[qw, qx, qy, qz]`,
 rotating BODY vectors into NED. The identity is `[1, 0, 0, 0]`; `q` and `-q`
 represent the same orientation. The rotation matrix and its inverse satisfy:

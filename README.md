@@ -229,20 +229,32 @@ attitude, BODY velocities and angular rates, and NED position, then publishes
 Euler angles and local flat-Earth latitude/longitude with each state. The
 packet fields and units are specified in the [IPC schema](#version-1-message-schema).
 
-The dynamics follow Fossen's rigid-body form:
+The kinematics and dynamics follow Fossen's six-degree-of-freedom form:
 
 ```math
+\begin{aligned}
+\dot{\boldsymbol\eta} &= \mathbf J(\boldsymbol\eta)\boldsymbol\nu, \\
 \mathbf M\dot{\boldsymbol\nu}
 + \mathbf C(\boldsymbol\nu)\boldsymbol\nu
 + \mathbf D(\boldsymbol\nu)\boldsymbol\nu
 + \mathbf g(\boldsymbol\eta)
-= \boldsymbol\tau
+&= \boldsymbol\tau.
+\end{aligned}
 ```
 
-Here $\boldsymbol\eta$ is the vehicle pose. $\mathbf M$ combines rigid-body
-and added mass; $\mathbf C$ includes their Coriolis terms; $\mathbf D$ is
-linear plus quadratic damping; $\mathbf g$ is the weight/buoyancy restoring
-term; and $\boldsymbol\tau$ comes from the
+Here $\boldsymbol\eta$ is NED position and attitude, $\boldsymbol\nu$ contains
+BODY linear and angular velocities, and $\mathbf J$ maps them to NED position
+and attitude rates. The simulator performs this kinematic update with a
+BODY-to-NED rotation and quaternion attitude. The Python
+`quaternion_from_euler` helper accepts Euler roll, pitch, and yaw to construct
+a quaternion state, although the CLI and UI currently start level. Integrating
+quaternions avoids the Euler-rate Jacobian's singularity at $\pm90^\circ$
+pitch; state packets and CSV output
+convert attitude back to Euler angles.
+
+$\mathbf M$ combines rigid-body and added mass; $\mathbf C$ includes
+their Coriolis terms; $\mathbf D$ is linear plus quadratic damping; $\mathbf g$
+is the weight/buoyancy restoring term; and $\boldsymbol\tau$ comes from the
 propeller and fins. Classical RK4 advances the state at a fixed timestep,
 recalculating forces at each stage. The
 default 84 kg, 2 m hull and hydrodynamic coefficients are illustrative
