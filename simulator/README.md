@@ -227,23 +227,24 @@ volume is $V=m/\rho$. Hull length $L$ sets the longitudinal semiaxis
 $a=L/2$; the transverse semiaxes are $b$, with $V=4\pi ab^2/3$.
 Let $\mathbf e_D=(e_x,e_y,e_z)$ be the NED-down unit vector expressed in BODY
 axes, $\mathbf r_{\mathrm{CB}}$ the nominal CB position relative to CG, and
-$z_{\mathrm{CG}}$ the CG depth below the waterline. The normalized immersion
-$s$, submerged fraction, and buoyancy are:
+$z_{\mathrm{CG}}$ the CG depth below the waterline. The transverse semiaxis
+$b$ and normalized immersion $s$ are:
 
 ```math
 \begin{aligned}
 b &= \sqrt{\frac{3V}{4\pi a}}, \\
 s &= \frac{z_{\mathrm{CG}}+\mathbf e_D\cdot\mathbf r_{\mathrm{CB}}}
-{\sqrt{a^2e_x^2+b^2e_y^2+b^2e_z^2}}, \\
-f_{\mathrm{submerged}} &=
-\begin{cases}
-0, & s\leq-1, \\
-\dfrac{(2-s)(1+s)^2}{4}, & -1<s<1, \\
-1, & s\geq1,
-\end{cases} \\
-B &= mgf_{\mathrm{submerged}}.
+{\sqrt{a^2e_x^2+b^2e_y^2+b^2e_z^2}}.
 \end{aligned}
 ```
+
+| Normalized immersion | Submerged fraction $f_{\mathrm{submerged}}$ |
+| --- | --- |
+| $s\leq-1$ | $0$ |
+| $-1<s<1$ | $\frac{(2-s)(1+s)^2}{4}$ |
+| $s\geq1$ | $1$ |
+
+Buoyancy is $B=mgf_{\mathrm{submerged}}$.
 
 For a partly submerged hull, the ellipsoidal-cap calculation also moves the
 buoyancy centre to the submerged volume's centroid. Rotate weight and
