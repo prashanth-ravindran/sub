@@ -52,22 +52,32 @@ Attitude uses Hamilton quaternions in scalar-first order `[qw, qx, qy, qz]`,
 rotating BODY vectors into NED. The identity is `[1, 0, 0, 0]`; `q` and `-q`
 represent the same orientation. The rotation matrix and its inverse satisfy:
 
-```text
-velocity_ned  = R @ velocity_body
-velocity_body = R.T @ velocity_ned
-R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+```math
+\begin{aligned}
+\mathbf v_{\mathrm{NED}} &= \mathbf R\mathbf v_{\mathrm{BODY}}, \\
+\mathbf v_{\mathrm{BODY}} &= \mathbf R^{\mathsf T}\mathbf v_{\mathrm{NED}}, \\
+\mathbf R &= \mathbf R_z(\psi)\mathbf R_y(\theta)\mathbf R_x(\phi).
+\end{aligned}
 ```
 
+Here $\phi$, $\theta$, and $\psi$ denote roll, pitch, and yaw.
 Euler conversions use SciPy's extrinsic `"xyz"` sequence with roll, pitch, yaw
 in radians. At pitch ±90°, Euler angles are not unique: conversion retains
 SciPy's gimbal-lock warning and returns an equivalent orientation. Internal
 quaternion calculations have no Euler singularity.
 
-For `omega = [p, q, r]` and quaternion vector part `qv`:
+For angular velocity $\boldsymbol\omega=[p,q,r]^{\mathsf T}$ and quaternion
+vector part $\mathbf q_v=[q_x,q_y,q_z]^{\mathsf T}$:
 
-```text
-position_dot = R @ [u, v, w]
-quaternion_dot = 0.5 * [-dot(qv, omega), qw * omega + cross(qv, omega)]
+```math
+\begin{aligned}
+\dot{\mathbf p} &= \mathbf R[u,v,w]^{\mathsf T}, \\
+\dot{\mathbf q} &= \tfrac12
+\begin{bmatrix}
+-\mathbf q_v\cdot\boldsymbol\omega \\
+q_w\boldsymbol\omega+\mathbf q_v\times\boldsymbol\omega
+\end{bmatrix}.
+\end{aligned}
 ```
 
 BODY angular rates are not generally Euler-angle derivatives. Functions
@@ -103,9 +113,8 @@ displacement. A 2 m ellipsoid with that volume has an effective transverse
 diameter of about 0.28 m. The assumed inertias are not derived from this
 geometry.
 
-When fully submerged, the model is neutrally buoyant:
-`B = W = mass_kg * gravity_mps2`. Partial submergence reduces buoyancy below
-weight.
+When fully submerged, the model is neutrally buoyant: $B=W=mg$. Partial
+submergence reduces buoyancy below weight.
 
 CG is `[0, 0, 0]` and the nominal fully submerged CB is
 `[0, 0, -cb_height_m]` in BODY coordinates.
@@ -133,73 +142,111 @@ approximations.
 
 ## Equations and signs
 
-Using `S(a) @ b = cross(a, b)` and `I = diag(Ix, Iy, Iz)`:
+Let $\mathbf S(\mathbf a)\mathbf b=\mathbf a\times\mathbf b$ and
+$\mathbf I=\operatorname{diag}(I_x,I_y,I_z)$. The rigid-body and added-mass
+terms are:
 
-```text
-M_RB = diag(m, m, m, Ix, Iy, Iz)
-C_RB = block_diag(m * S(omega), -S(I @ omega))
+```math
+\begin{aligned}
+\mathbf M_{\mathrm{RB}} &= \operatorname{diag}(m,m,m,I_x,I_y,I_z), \\
+\mathbf C_{\mathrm{RB}} &=
+\begin{bmatrix}
+m\mathbf S(\boldsymbol\omega) & \mathbf 0 \\
+\mathbf 0 & -\mathbf S(\mathbf I\boldsymbol\omega)
+\end{bmatrix}, \\
+\mathbf M_{\mathrm A} &= \operatorname{diag}(\mathbf m_{\mathrm A}), \\
+\mathbf a &= \mathbf M_{\mathrm A}\boldsymbol\nu, \\
+\mathbf C_{\mathrm A} &=
+\begin{bmatrix}
+\mathbf 0 & -\mathbf S(\mathbf a_{1:3}) \\
+-\mathbf S(\mathbf a_{1:3}) & -\mathbf S(\mathbf a_{4:6})
+\end{bmatrix}.
+\end{aligned}
+```
 
-M_A = diag(added_mass)
-a = M_A @ nu
-C_A = [[zeros(3,3), -S(a[:3])],
-       [-S(a[:3]), -S(a[3:])]]
-drag = (linear_damping + quadratic_damping * abs(nu)) * nu
+Here $\mathbf m_{\mathrm A}$ is the six-element `added_mass` parameter.
+With elementwise multiplication $\odot$, linear and quadratic damping give:
 
-M = M_RB + M_A
-C = C_RB + C_A
-M @ nu_dot + C @ nu + drag + g = tau
-nu_dot = solve(M, tau - C @ nu - drag - g)
+```math
+\mathbf d(\boldsymbol\nu)
+= \left(\mathbf d_{\mathrm{lin}}+
+\mathbf d_{\mathrm{quad}}\odot|\boldsymbol\nu|\right)
+\odot\boldsymbol\nu.
+```
+
+The resulting acceleration is:
+
+```math
+\begin{aligned}
+\mathbf M &= \mathbf M_{\mathrm{RB}}+\mathbf M_{\mathrm A}, \\
+\mathbf C &= \mathbf C_{\mathrm{RB}}+\mathbf C_{\mathrm A}, \\
+\mathbf M\dot{\boldsymbol\nu}+\mathbf C\boldsymbol\nu
++\mathbf d+\mathbf g &= \boldsymbol\tau, \\
+\dot{\boldsymbol\nu} &= \mathbf M^{-1}
+\left(\boldsymbol\tau-\mathbf C\boldsymbol\nu-\mathbf d-\mathbf g\right).
+\end{aligned}
 ```
 
 This is Fossen's angular-rate form of rigid-body Coriolis coupling at CG.
-It produces `m * cross(omega, velocity_body)` and
-`cross(omega, I @ omega)`. The mass matrix is symmetric positive definite;
+It produces $m\boldsymbol\omega\times\mathbf v_{\mathrm{BODY}}$ and
+$\boldsymbol\omega\times(\mathbf I\boldsymbol\omega)$. The mass matrix is
+symmetric positive definite;
 the Coriolis matrix is skew symmetric and contributes zero instantaneous
-power, `nu.T @ C_RB @ nu = 0`. These properties also hold for the total
-mass and Coriolis matrices. `nu @ drag >= 0` ensures damping removes energy,
+power, $\boldsymbol\nu^{\mathsf T}\mathbf C_{\mathrm{RB}}\boldsymbol\nu=0$.
+These properties also hold for the total mass and Coriolis matrices.
+$\boldsymbol\nu^{\mathsf T}\mathbf d\geq0$ ensures damping removes energy,
 including when velocities reverse. Water is stationary: there is no ocean
 current or relative-current acceleration term in this implementation.
 
 Weight acts downward in NED, buoyancy upward. The nominal full-displacement
-volume is `V = mass_kg / water_density_kg_m3`. A length `L` sets the
-ellipsoid's longitudinal semiaxis `a = L/2`; its transverse semiaxes follow
-from `V = 4*pi*a*b^2/3`. Let `down_body` be the NED-down unit vector expressed
-in BODY axes with components `down_x`, `down_y`, and `down_z`; `r_CB` is the
-nominal CB position relative to CG, and `depth_CG` is the CG depth below the
-waterline. Normalized immersion `s` and the submerged fraction are:
+volume is $V=m/\rho$. Hull length $L$ sets the longitudinal semiaxis
+$a=L/2$; the transverse semiaxes are $b$, with $V=4\pi ab^2/3$.
+Let $\mathbf e_D=(e_x,e_y,e_z)$ be the NED-down unit vector expressed in BODY
+axes, $\mathbf r_{\mathrm{CB}}$ the nominal CB position relative to CG, and
+$z_{\mathrm{CG}}$ the CG depth below the waterline. The normalized immersion
+$s$, submerged fraction, and buoyancy are:
 
-```text
-b = sqrt(3*V / (4*pi*a))
-s = (depth_CG + dot(down_body, r_CB)) /
-    sqrt(a^2*down_x^2 + b^2*down_y^2 + b^2*down_z^2)
-f_submerged = 0                 if s <= -1
-              (2-s)*(1+s)^2/4  if -1 < s < 1
-              1                 if s >= 1
-B = mass_kg * gravity_mps2 * f_submerged
+```math
+\begin{aligned}
+b &= \sqrt{\frac{3V}{4\pi a}}, \\
+s &= \frac{z_{\mathrm{CG}}+\mathbf e_D\cdot\mathbf r_{\mathrm{CB}}}
+{\sqrt{a^2e_x^2+b^2e_y^2+b^2e_z^2}}, \\
+f_{\mathrm{submerged}} &=
+\begin{cases}
+0, & s\leq-1, \\
+\dfrac{(2-s)(1+s)^2}{4}, & -1<s<1, \\
+1, & s\geq1,
+\end{cases} \\
+B &= mgf_{\mathrm{submerged}}.
+\end{aligned}
 ```
 
 For a partly submerged hull, the ellipsoidal-cap calculation also moves the
 buoyancy centre to the submerged volume's centroid. Rotate weight and
 buoyancy into BODY coordinates and calculate the buoyancy moment with
-`cross(cb_submerged_body, buoyancy_body)`. Weight has no moment about CG.
+$\mathbf r_{\mathrm{CB,sub}}\times\mathbf B_{\mathrm{BODY}}$.
+Weight has no moment about CG.
 The simulator does not stop or clamp motion at the waterline; the fraction
 varies continuously from zero to one. `restoring_vector` returns the
-**negative** of the physical hydrostatic force/moment vector because `g`
+**negative** of the physical hydrostatic force/moment vector because $\mathbf g$
 belongs on the equation's left-hand side. The same ellipsoid helper is in
 `simulator/scratch/fossen.py` and is used by the operational hydrostatics.
 
-When fully submerged, `f_submerged = 1`, the buoyancy centre is the nominal
-CB, and the translational force cancels at every attitude. The remaining
+When fully submerged, $f_{\mathrm{submerged}}=1$, the buoyancy centre is the
+nominal CB, and the translational force cancels at every attitude. The remaining
 components are:
 
-```text
-g_roll  = W * cb_height_m * cos(pitch) * sin(roll)
-g_pitch = W * cb_height_m * sin(pitch)
-g_yaw   = 0
+```math
+\begin{aligned}
+g_{\mathrm{roll}} &= Wh\cos\theta\sin\phi, \\
+g_{\mathrm{pitch}} &= Wh\sin\theta, \\
+g_{\mathrm{yaw}} &= 0,
+\end{aligned}
 ```
 
-The physical moments are `-g_roll` and `-g_pitch`, opposing small angular
-disturbances. With damping a fully submerged vehicle settles toward level.
+where $h$ is `cb_height_m`. The physical moments are $-g_{\mathrm{roll}}$ and
+$-g_{\mathrm{pitch}}$, opposing small angular disturbances. With damping a
+fully submerged vehicle settles toward level.
 
 ## Actuators and integration
 
@@ -207,17 +254,20 @@ Commands are `(propeller_rpm, elevator_deg, rudder_deg)`. Accepted ranges
 match the shared protocol: 0–3000 RPM and ±20° for each fin pair.
 The service rejects invalid commands rather than silently clipping them.
 
-```text
-n = RPM / 60
-X = propeller_thrust_coefficient * n²
-lift_scale = 0.5 * density * max(u, 0)² * fin_lift_slope_per_rad
-Z =  lift_scale * elevator_area * radians(elevator_deg)
-Y = -lift_scale * rudder_area   * radians(rudder_deg)
-M = -fin_x * Z
-N =  fin_x * Y
-tau = [X, Y, Z, 0, M, N]
+```math
+\begin{aligned}
+n &= \frac{\mathrm{RPM}}{60}, & X &= k_Tn^2, \\
+\ell_f &= \tfrac12\rho\max(u,0)^2C_f, \\
+Z &= \ell_f A_e\delta_e, & Y &= -\ell_f A_r\delta_r, \\
+M &= -x_fZ, & N &= x_fY, \\
+\boldsymbol\tau &= [X,Y,Z,0,M,N]^{\mathsf T}.
+\end{aligned}
 ```
 
+Here $k_T$ is the propeller thrust coefficient, $C_f$ the fin lift slope,
+$A_e$ and $A_r$ the combined elevator and rudder areas, and $x_f$ their
+aft position. Fin angles $\delta_e$ and $\delta_r$ are converted from degrees
+to radians before computing forces.
 Positive elevator produces a downward tail force and a nose-up pitch
 moment. Positive rudder produces a portward tail force and starboard yaw.
 Each pair is represented by its combined area; there is no extra factor of
@@ -233,15 +283,19 @@ after the completed step. Nonfinite states and invalid timesteps raise errors.
 
 Geography uses a local **flat-Earth** NED frame. North/east displacements
 convert linearly to latitude/longitude with scales fixed at the origin.
-`R = 6,371,000 m` only sets the metres-to-degrees scale; it does not introduce
-Earth curvature into the simulation:
+$R_E=6{,}371{,}000\,\mathrm m$ only sets the metres-to-degrees scale; it does
+not introduce Earth curvature into the simulation:
 
-```text
-latitude  = latitude_origin  + degrees(north / R)
-longitude = longitude_origin + degrees(east / (R * cos(latitude_origin)))
+```math
+\begin{aligned}
+\mathrm{lat} &= \mathrm{lat}_0+\operatorname{deg}\!\left(\frac{d_N}{R_E}\right), \\
+\mathrm{lon} &= \mathrm{lon}_0+\operatorname{deg}\!\left(
+\frac{d_E}{R_E\cos(\mathrm{lat}_{0,\mathrm{rad}})}\right).
+\end{aligned}
 ```
 
-The cosine takes the origin latitude in radians. Longitude wraps to
+Here $d_N$ and $d_E$ are north and east displacements. The cosine takes the
+origin latitude in radians. Longitude wraps to
 `[-180, 180)`. Polar origins and out-of-range latitude results are rejected.
 The NED axes and level water surface stay fixed. Depth remains the NED down
 coordinate. This flat-Earth approximation is intended for local, short paths.
@@ -313,12 +367,12 @@ Run from the repository root on a platform supporting Unix `SOCK_SEQPACKET`
 ```
 
 Execution defaults to accelerated: no wall-clock pacing. The default
-simulation frequency is 100 Hz, `dt = 0.01 s`. Each completed physics step
+simulation frequency is 100 Hz, $\Delta t=0.01\,\mathrm s$. Each completed physics step
 is written to CSV when output is requested, and publication is attempted for
 a connected client. There is no separate publication-rate setting. In
 accelerated mode, wall-clock publication rate depends on how fast the
 simulation advances.
-Physics time is always `step * dt`. Use `--real-time` for wall-clock pacing
+Physics time at step $k$ is $t_k=k\Delta t$. Use `--real-time` for wall-clock pacing
 with absolute monotonic deadlines.
 For a separate accelerated controller, `--sync-controller --control-period 0.05`
 requires an integer number of physics steps in each 0.05 s control interval.

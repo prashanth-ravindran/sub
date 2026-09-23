@@ -231,14 +231,20 @@ packet fields and units are specified in the [IPC schema](#version-1-message-sch
 
 The dynamics follow Fossen's rigid-body form:
 
-```text
-M * nu_dot + C(nu) * nu + D(nu) * nu + g(pose) = tau
+```math
+\mathbf M\dot{\boldsymbol\nu}
++ \mathbf C(\boldsymbol\nu)\boldsymbol\nu
++ \mathbf D(\boldsymbol\nu)\boldsymbol\nu
++ \mathbf g(\boldsymbol\eta)
+= \boldsymbol\tau
 ```
 
-`M` combines rigid-body and added mass; `C` includes their Coriolis terms;
-`D` is linear plus quadratic damping; `g` is the weight/buoyancy restoring
-term; and `tau` comes from the propeller and fins. Classical RK4 advances
-the state at a fixed timestep, recalculating forces at each stage. The
+Here $\boldsymbol\eta$ is the vehicle pose. $\mathbf M$ combines rigid-body
+and added mass; $\mathbf C$ includes their Coriolis terms; $\mathbf D$ is
+linear plus quadratic damping; $\mathbf g$ is the weight/buoyancy restoring
+term; and $\boldsymbol\tau$ comes from the
+propeller and fins. Classical RK4 advances the state at a fixed timestep,
+recalculating forces at each stage. The
 default 84 kg, 2 m hull and hydrodynamic coefficients are illustrative
 assumptions, not measurements. A 2 cm CB-above-CG offset supplies restoring
 roll and pitch moments when submerged. One RPM command drives the aft
@@ -247,7 +253,7 @@ pair. Commands are limited to 0–3000 RPM and ±20° per fin pair.
 
 At initial depth zero, the CG is at the waterline and all velocities are
 zero. An ellipsoidal hull approximation estimates the submerged fraction
-from depth and attitude. Buoyancy is `mass * gravity * submerged_fraction`;
+from depth and attitude. Buoyancy is $B=mgf_{\mathrm{submerged}}$;
 its force acts at the submerged volume's centroid, giving a consistent
 moment. Buoyancy equals weight when fully submerged, and crossing the
 waterline does not stop or clamp the simulation. Added mass, damping, and
