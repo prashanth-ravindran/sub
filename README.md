@@ -87,9 +87,10 @@ actuator commands over its Unix socket.
 mission starts, the controller API runs the control loop in a worker thread
 and launches a dedicated simulator child process with a unique Unix socket.
 The standalone simulator UI and API are not needed for this mode. The
-simulator publishes every 100 Hz state and, at each 20 Hz simulated-time
-control boundary, waits for a matching actuator command or stop packet.
-It integrates five physics steps between boundaries. The controller logs
+simulator attempts to publish every physics state at the selected 60, 80, or
+100 Hz rate (100 Hz by default). At each 20 Hz simulated-time control
+boundary it waits for a matching actuator command or stop packet, after
+three, four, or five physics steps, respectively. The controller logs
 setpoints, measured state, and commands; the simulator logs every physics
 step. The controller API serves both CSV files and run status to its UI.
 
@@ -99,7 +100,7 @@ flowchart TB
     API -->|starts worker thread| CTRL["Guidance and PID, LQR, or LQI"]
     CTRL <-->|Unix socket: state and commands| SIM["Simulator child process"]
     CTRL --> CONTROL_CSV["20 Hz controller CSV"]
-    SIM --> STATE_CSV["100 Hz simulator CSV"]
+    SIM --> STATE_CSV["Simulator state CSV"]
 ```
 
 ## Inter-process communication (IPC)
@@ -202,8 +203,9 @@ encoding and socket handling are in `common/ipc.py`.
   are rejected without replacing the last valid command. Gaps in command
   sequence numbers are allowed: a newer valid command takes over. Command
   polling is limited to 64 packets per physics step.
-- In synchronized controller runs, the simulator publishes each physics state
-  and waits at each 20 Hz control boundary (every five 100 Hz physics steps)
+- In synchronized controller runs, the simulator attempts to publish each
+  physics state and waits at each 20 Hz control boundary (every three, four,
+  or five physics steps at 60, 80, or 100 Hz)
   for a command or stop packet referencing that boundary's state sequence.
   It does not advance past the boundary without one. A missing command or
   undelivered boundary state times out; the controller also fails on a missing
@@ -216,6 +218,60 @@ Tests live in `tests/`. In particular, `test_ipc.py`,
 `test_simulator_ipc.py`, and `test_controller_service.py` cover packet
 boundaries, validation, expiry, backpressure, disconnects, and synchronized
 control behavior.
+
+## Simulator
+
+The simulator integrates a torpedo-shaped vehicle's six degrees of freedom.
+BODY axes point forward, starboard, and down from the centre of gravity (CG);
+position uses a North-East-Down (NED) frame whose origin is at the waterline.
+Depth is the CG's NED down coordinate. The simulator integrates quaternion
+attitude, BODY velocities and angular rates, and NED position, then publishes
+Euler angles and local flat-Earth latitude/longitude with each state. The
+packet fields and units are specified in the [IPC schema](#version-1-message-schema).
+
+The dynamics follow Fossen's rigid-body form:
+
+```text
+M * nu_dot + C(nu) * nu + D(nu) * nu + g(pose) = tau
+```
+
+`M` combines rigid-body and added mass; `C` includes their Coriolis terms;
+`D` is linear plus quadratic damping; `g` is the weight/buoyancy restoring
+term; and `tau` comes from the propeller and fins. Classical RK4 advances
+the state at a fixed timestep, recalculating forces at each stage. The
+default 84 kg, 2 m hull and hydrodynamic coefficients are illustrative
+assumptions, not measurements. A 2 cm CB-above-CG offset supplies restoring
+roll and pitch moments when submerged. One RPM command drives the aft
+propeller; one angle each represents a symmetric elevator pair and rudder
+pair. Commands are limited to 0–3000 RPM and ±20° per fin pair.
+
+At initial depth zero, the CG is at the waterline and all velocities are
+zero. An ellipsoidal hull approximation estimates the submerged fraction
+from depth and attitude. Buoyancy is `mass * gravity * submerged_fraction`;
+its force acts at the submerged volume's centroid, giving a consistent
+moment. Buoyancy equals weight when fully submerged, and crossing the
+waterline does not stop or clamp the simulation. Added mass, damping, and
+actuator forces are still submerged-vehicle approximations near the surface.
+
+The standalone simulator starts at 50 m depth by default. This command runs
+a surface-start propeller step and writes one CSV row per completed physics
+step (choose an output filename that does not already exist):
+
+```bash
+.venv/bin/python -m simulator --scenario surge_step --initial-depth 0 --duration 30 --output surface-surge.csv
+```
+
+`surge_step` applies 1800 RPM from two seconds; inspect `u_mps` and `depth_m`
+in the CSV to see the speed response and departure from the waterline.
+
+`--frequency` sets both the fixed physics timestep and the nominal rate of
+state publication to a connected IPC client; the default is 100 Hz. The
+default accelerated mode advances as fast as it can, while `--real-time`
+paces steps to wall-clock time. State sends are best effort in standalone
+mode, but the CSV records every completed step. Simulator tests, including
+surface buoyancy and crossing checks, are in `tests/`. See the
+[simulator README](simulator/README.md) for parameter values, equations,
+scenario responses, UI/API operation, and model limitations.
 
 ## Controller
 

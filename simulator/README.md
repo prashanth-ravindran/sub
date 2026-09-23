@@ -42,9 +42,11 @@ tau   = [X, Y, Z, K, M, N]                                  # shape (6,)
 `tau` contains applied BODY forces and moments, not RPM or fin deflections.
 Depth equals the NED down coordinate if the NED origin is at the water surface.
 The origin defaults to latitude 13°, longitude 80°, at the water surface.
-The service starts level and stationary at 50 m depth. Initial depth and
-geographic origin are configurable. Crossing the surface stops the simulation
-with an error: this model describes a fully submerged vehicle.
+The standalone service starts level and stationary at 50 m depth by default;
+controller-launched runs start at zero depth. Initial depth and geographic
+origin are configurable. At zero depth the CG is at the waterline and all
+velocities are zero. The simulator allows the CG to cross the waterline
+without clamping its depth; buoyancy changes with the submerged hull volume.
 
 Attitude uses Hamilton quaternions in scalar-first order `[qw, qx, qy, qz]`,
 rotating BODY vectors into NED. The identity is `[1, 0, 0, 0]`; `q` and `-q`
@@ -92,15 +94,21 @@ the supplied state.
 | `elevator_area_m2`, `rudder_area_m2` | 0.02 each | Total area of each symmetric pair |
 | `fin_lift_slope_per_rad` | 4.0 | Assumed lift slope |
 | `fin_x_m` | -0.8 | Fin position aft of CG, metres |
+| `hull_length_m` | 2.0 | Length of the ellipsoid used for submergence |
 
-These are illustrative engineering assumptions from the tutorial, not
-measured coefficients or values copied from an MSS vehicle. They represent
-a roughly 2 m long, 0.25 m diameter torpedo-shaped vehicle; geometry is not
-used to calculate the assumed inertias. At a reference water density of
-1025 kg/m³, 84 kg corresponds to about 0.08195 m³ of displacement.
+These are illustrative engineering assumptions, not measured coefficients
+or values copied from an MSS vehicle. At the default
+water density of 1025 kg/m³, 84 kg corresponds to about 0.08195 m³ of full
+displacement. A 2 m ellipsoid with that volume has an effective transverse
+diameter of about 0.28 m. The assumed inertias are not derived from this
+geometry.
 
-The model enforces exact neutral buoyancy, `B = W = mass_kg * gravity_mps2`.
-CG is `[0, 0, 0]` and CB is `[0, 0, -cb_height_m]` in BODY coordinates.
+When fully submerged, the model is neutrally buoyant:
+`B = W = mass_kg * gravity_mps2`. Partial submergence reduces buoyancy below
+weight.
+
+CG is `[0, 0, 0]` and the nominal fully submerged CB is
+`[0, 0, -cb_height_m]` in BODY coordinates.
 Mass, principal inertias, and gravity must be finite and positive. CB height
 must be finite and nonnegative; zero removes the restoring couple. Parameter
 instances are immutable, including inertia values supplied as a list.
@@ -118,7 +126,10 @@ through the HTTP API when tuning a specific vehicle.
 
 Vertical CB–CG separation gives both roll and pitch restoration. For a fully
 submerged vehicle, this separation expresses stability directly; a
-surface-vessel waterplane/metacentric model is not used here.
+surface-vessel waterplane/metacentric model is not used here. At the surface,
+only the hydrostatic buoyancy force and moment change with submergence;
+added mass, damping, and actuator forces retain their submerged-vehicle
+approximations.
 
 ## Equations and signs
 
@@ -149,14 +160,37 @@ mass and Coriolis matrices. `nu @ drag >= 0` ensures damping removes energy,
 including when velocities reverse. Water is stationary: there is no ocean
 current or relative-current acceleration term in this implementation.
 
-Weight acts downward in NED, buoyancy upward. Rotate both forces into BODY
-coordinates and calculate the buoyancy moment with `cross(cb_body, buoyancy_body)`.
-Weight has no moment about CG. `restoring_vector` returns the **negative**
-of the physical hydrostatic force/moment vector because `g` belongs on the
-equation's left-hand side.
+Weight acts downward in NED, buoyancy upward. The nominal full-displacement
+volume is `V = mass_kg / water_density_kg_m3`. A length `L` sets the
+ellipsoid's longitudinal semiaxis `a = L/2`; its transverse semiaxes follow
+from `V = 4*pi*a*b^2/3`. Let `down_body` be the NED-down unit vector expressed
+in BODY axes with components `down_x`, `down_y`, and `down_z`; `r_CB` is the
+nominal CB position relative to CG, and `depth_CG` is the CG depth below the
+waterline. Normalized immersion `s` and the submerged fraction are:
 
-For neutral buoyancy with CB directly above CG, the translational force
-cancels at every attitude. The remaining components are:
+```text
+b = sqrt(3*V / (4*pi*a))
+s = (depth_CG + dot(down_body, r_CB)) /
+    sqrt(a^2*down_x^2 + b^2*down_y^2 + b^2*down_z^2)
+f_submerged = 0                 if s <= -1
+              (2-s)*(1+s)^2/4  if -1 < s < 1
+              1                 if s >= 1
+B = mass_kg * gravity_mps2 * f_submerged
+```
+
+For a partly submerged hull, the ellipsoidal-cap calculation also moves the
+buoyancy centre to the submerged volume's centroid. Rotate weight and
+buoyancy into BODY coordinates and calculate the buoyancy moment with
+`cross(cb_submerged_body, buoyancy_body)`. Weight has no moment about CG.
+The simulator does not stop or clamp motion at the waterline; the fraction
+varies continuously from zero to one. `restoring_vector` returns the
+**negative** of the physical hydrostatic force/moment vector because `g`
+belongs on the equation's left-hand side. The same ellipsoid helper is in
+`simulator/scratch/fossen.py` and is used by the operational hydrostatics.
+
+When fully submerged, `f_submerged = 1`, the buoyancy centre is the nominal
+CB, and the translational force cancels at every attitude. The remaining
+components are:
 
 ```text
 g_roll  = W * cb_height_m * cos(pitch) * sin(roll)
@@ -165,7 +199,7 @@ g_yaw   = 0
 ```
 
 The physical moments are `-g_roll` and `-g_pitch`, opposing small angular
-disturbances. With damping the vehicle settles toward level.
+disturbances. With damping a fully submerged vehicle settles toward level.
 
 ## Actuators and integration
 
@@ -251,7 +285,8 @@ Run all tests, including existing IPC tests:
 Use `python -m pytest` from the repository root so Python includes the local
 packages on its import path. The tests cover matrix symmetry/positive
 definiteness, Coriolis cross-products/skew symmetry/zero power, damping and
-decay, neutral buoyancy, restoring signs, RK4 convergence, quaternion norm,
+decay, neutral and partial buoyancy, submerged-centroid moments, surface
+crossing, restoring signs, RK4 convergence, quaternion norm,
 fin signs and speed scaling, geographic conversion, scenario transients,
 and 50 Hz versus 100 Hz timestep convergence. Service tests exercise command
 expiry, malformed/truncated packets, slow readers, reconnects, CSV output,
@@ -270,6 +305,7 @@ Run from the repository root on a platform supporting Unix `SOCK_SEQPACKET`
 .venv/bin/python -m simulator --scenario surge_step --output surge.csv
 .venv/bin/python -m simulator --scenario elevator_step --output elevator.csv
 .venv/bin/python -m simulator --scenario rudder_step --output rudder.csv
+.venv/bin/python -m simulator --scenario surge_step --initial-depth 0 --output surface-surge.csv
 
 # Configurable real-time rate, duration, origin and initial depth.
 .venv/bin/python -m simulator --real-time --frequency 50 --duration 10 --initial-depth 20 \
@@ -277,15 +313,23 @@ Run from the repository root on a platform supporting Unix `SOCK_SEQPACKET`
 ```
 
 Execution defaults to accelerated: no wall-clock pacing. The default
-simulation frequency is 100 Hz, `dt = 0.01 s`; publication runs as fast as
-the simulation can advance. Physics time is always `step * dt`.
-Use `--real-time` for wall-clock pacing with absolute monotonic deadlines.
+simulation frequency is 100 Hz, `dt = 0.01 s`. Each completed physics step
+is written to CSV when output is requested, and publication is attempted for
+a connected client. There is no separate publication-rate setting. In
+accelerated mode, wall-clock publication rate depends on how fast the
+simulation advances.
+Physics time is always `step * dt`. Use `--real-time` for wall-clock pacing
+with absolute monotonic deadlines.
 For a separate accelerated controller, `--sync-controller --control-period 0.05`
-pauses at every fifth 100 Hz step until a matching actuator command arrives
-over the shared Unix IPC socket. It publishes the initial state at time zero
-and all intermediate 100 Hz states. Only external-controller mode supports
-this option; ordinary accelerated and real-time runs keep their existing
-behavior. See `controller/README.md` for the controller service and UI.
+requires an integer number of physics steps in each 0.05 s control interval.
+The controller UI offers 60, 80, and 100 Hz, giving three, four, or five
+steps per control update, respectively. The simulator pauses at each control
+boundary until a matching actuator command arrives over the shared Unix IPC
+socket. It publishes the initial state at time zero, attempts every
+intermediate state, and retries boundary states until delivered or timed out.
+Only external-controller mode supports this option; ordinary accelerated
+and real-time runs keep their existing behavior. See `controller/README.md`
+for the controller service and UI.
 An overrun increments a counter and subsequent steps catch up without
 skipping physics steps. `--fast` explicitly selects the default accelerated
 mode; it cannot be combined with `--real-time`. In Python, pass `fast=False`
@@ -379,6 +423,11 @@ These are measurements on this machine, not latency guarantees.
 | `surge_step` | 1800 RPM (90 N) at 2 s | Speed tends to 2.902 m/s; depth stays 50 m |
 | `elevator_step` | Same thrust, +1° elevator at 10 s | Nose pitches up; depth decreases |
 | `rudder_step` | Same thrust, +3° rudder at 10 s | Positive yaw and eastward displacement |
+
+The table uses the default 50 m initial depth. In the zero-depth example
+above, buoyancy is initially less than weight, so the vehicle descends from
+the waterline before the 2 s propeller step. Compare `depth_m` and `u_mps`
+in that run's CSV to see the surface departure and surge response.
 
 Scenario schedules use simulation time and are the exclusive actuator
 source while selected; inbound actuator packets are drained and ignored.
