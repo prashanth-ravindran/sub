@@ -160,6 +160,13 @@ or a guarantee that LQI is always preferable. Integral action adds state
 and tuning complexity and can worsen transients if poorly tuned. The
 scratch self-test exercises the biased LQI case and its anti-windup rules.
 
+The error histories below use the operational LQR/LQI laws against the
+simulator-owned Fossen model in that same submerged, doubled-drag and
+biased-fin experiment. They show the persistent LQR offsets and the LQI
+settling response, rather than a surface-start IPC run.
+
+![LQR and LQI errors with doubled drag and biased fins](figures/lqr_lqi_bias.png)
+
 ## Tuning
 
 These are reproducible **first-pass estimates from the current simulator**,
@@ -330,6 +337,25 @@ arrival-time promises:
 | PID | 369.80 s | 9.9865 m | 1.5000 m/s | 14.9883 m |
 | LQR | 370.25 s | 10.0000 m | 1.5000 m/s | 14.9676 m |
 | LQI | 369.70 s | 10.0000 m | 1.5000 m/s | 14.9905 m |
+
+The following traces come from separate default missions run through the
+controller service and simulator IPC at 100 Hz physics and 20 Hz control.
+The black dashed curves are the PID run's requested values; depth and speed
+requests are identical across modes, while each mode updates its own heading
+request from its current position. The dashed circle is the 15 m arrival
+radius, so the tracks end upon entering it rather than at the target point.
+
+![PID, LQR, and LQI mission tracking and waypoint paths](figures/mission_tracking.png)
+
+The PID run below shows the pitch transient alongside its setpoint and the
+three actuator commands. It makes command limits and the surface-departure
+transient visible; the UI's nine-panel figure provides the same views for
+any selected mode.
+
+![PID pitch and actuator commands during the default mission](figures/pid_actuators.png)
+
+Regenerate these figures with `.venv/bin/python -m scripts.generate_readme_plots`
+from the repository root. The script also regenerates the simulator figures.
 
 In each case the vehicle departed zero depth, commands stayed within their
 limits, and the goal was reached. The repo's `tests/` folder contains the

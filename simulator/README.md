@@ -503,10 +503,26 @@ These are measurements on this machine, not latency guarantees.
 | `elevator_step` | Same thrust, +1° elevator at 10 s | Nose pitches up; depth decreases |
 | `rudder_step` | Same thrust, +3° rudder at 10 s | Positive yaw and eastward displacement |
 
+These 100 Hz, 30 s open-loop traces use the default 50 m submerged start.
+The dashed line marks each actuator step; the plots show the resulting BODY
+surge speed or Euler attitude, not a commanded state setpoint.
+
+![Measured surge, elevator, and rudder step responses](figures/step_responses.png)
+
 The table uses the default 50 m initial depth. In the zero-depth example
 above, buoyancy is initially less than weight, so the vehicle descends from
 the waterline before the 2 s propeller step. Compare `depth_m` and `u_mps`
 in that run's CSV to see the surface departure and surge response.
+
+The left plot below is that surface-start run. The right plot evaluates the
+same ellipsoidal submergence helper for a level hull across CG depths; it is
+a model curve, not a second simulation trace. At zero depth, the CG is at
+the waterline and the hull is only partly submerged.
+
+![Surface departure and level-hull submerged fraction](figures/surface_buoyancy.png)
+
+Regenerate both figures with `.venv/bin/python -m scripts.generate_readme_plots`
+from the repository root. The script also regenerates the controller figures.
 
 Scenario schedules use simulation time and are the exclusive actuator
 source while selected; inbound actuator packets are drained and ignored.
