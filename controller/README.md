@@ -167,6 +167,246 @@ settling response, rather than a surface-start IPC run.
 
 ![LQR and LQI errors with doubled drag and biased fins](figures/lqr_lqi_bias.png)
 
+## Stability reasoning and evidence
+
+**PID, LQR, and LQI all pass the local closed-loop pole test at the default
+submerged cruise condition.** This section explains the system being tested,
+how the controller's memory is included, and how the pole results relate to
+the vehicle's response. It supports a local stability conclusion, not a
+global guarantee for every mission, parameter choice, or disturbance.
+
+### Operating point and scope
+
+The stability experiment regulates constant depth, speed, and heading:
+
+| Setting | Value used in this analysis |
+| --- | --- |
+| Vehicle | Current default simulator parameters; still water, fully submerged |
+| Reference depth and surge speed | 10 m and 1.5 m/s |
+| Reference attitude | Zero roll, pitch, and heading; northward level cruise |
+| Other BODY velocities/rates | Zero at equilibrium |
+| Equilibrium commands | Approximately 958 RPM; zero elevator and rudder |
+| Controller interval | 0.05 s, or 20 Hz; commands held between updates |
+| Nonlinear integration | Five 0.01 s RK4 steps per controller interval |
+| Controller memory | Zero integral errors; previous speed measurement 1.5 m/s |
+
+North/east position continues changing during cruise. It is therefore
+excluded from the regulation state, and waypoint bearing is held fixed at
+north. This analysis concerns recovery of depth, attitude, and velocity;
+it does not establish convergence of horizontal position to a waypoint.
+The [mission results](#run-and-inspect-a-mission) test the moving-bearing,
+surface-start task separately.
+
+The ten vehicle errors are the same as in the LQR description above:
+depth, roll, pitch, wrapped heading, surge-speed error, sway, heave, and
+the three BODY angular rates. Quaternion normalization does not introduce
+an extra physical attitude mode into this reduced model. At the operating
+point, actuator and integral limits are inactive. The analysis also assumes
+the implemented synchronized sample timing without additional actuator lag
+or communication delay.
+
+### The criterion: closed-loop pole magnitudes, not eigenvector sizes
+
+For a fixed-reference linearized discrete-time system,
+
+```math
+\mathbf z_{k+1}=\mathbf A_{\mathrm{cl}}\mathbf z_k,\qquad
+\rho(\mathbf A_{\mathrm{cl}})=\max_i|\lambda_i(\mathbf A_{\mathrm{cl}})|<1.
+```
+
+Here $\mathbf z$ includes both the vehicle errors and any controller memory.
+The eigenvalues of this complete closed-loop state matrix are its
+state-space poles. A mode with multiplier $\lambda$ evolves as
+$\lambda^k$; magnitudes below one decay, while magnitudes above one grow.
+Complex poles can give decaying oscillations. Poles exactly on the unit
+circle do not meet the strict asymptotic-stability criterion. See the
+[state-space pole definition and stability criteria](https://www.mathworks.com/help/control/ref/dynamicsystem.pole.html).
+
+The test is on **magnitude**: a pole of −1.2 fails even though −1.2 is less
+than 1. Eigenvectors describe modal directions and can be multiplied by
+any nonzero scalar, so there is no meaningful “eigenvector less than one”
+test. For continuous-time models the corresponding condition is negative
+real parts; the discrete-time criterion is the one used here.
+
+The simulator's separate `nu.T @ C @ nu == 0` check verifies that Coriolis
+coupling does no work. That is a physical consistency check on the plant;
+it does not establish stability after adding feedback and integrators.
+
+### Building the complete model for each controller
+
+| Law | Closed-loop state count | Memory included beyond the ten vehicle errors |
+| --- | ---: | --- |
+| PID | 15 | Four integrals: depth, pitch, heading, speed; one previous surge-speed measurement |
+| LQR | 10 | None |
+| LQI | 13 | Three integrals: depth, speed, heading |
+
+**LQR.** The local feedback is $\delta\mathbf a=-K\mathbf e$, so the
+closed-loop matrix is $A_d-B_dK$. The same plant linearization,
+zero-order-hold discretization, weights, and computed gain as the running
+controller are used.
+
+**LQI.** Integral states must be included before testing the poles. With
+$H$ selecting depth, speed, and heading errors, the augmented plant is
+
+```math
+A_{\mathrm{aug}}=\begin{bmatrix}A_d&0\\\Delta t\,H&I_3\end{bmatrix},\qquad
+B_{\mathrm{aug}}=\begin{bmatrix}B_d\\0\end{bmatrix},\qquad
+A_{\mathrm{cl}}=A_{\mathrm{aug}}-B_{\mathrm{aug}}K_{\mathrm{aug}}.
+```
+
+This follows the implementation's order: compute the command using the
+current integral, then update that integral for the next sample. Testing
+only the ten vehicle states would omit part of the feedback dynamics.
+The Riccati construction and its assumptions are described in
+[MIT's LQR notes](https://underactuated.mit.edu/lqr.html); the numerical pole
+test checks the resulting gain for this particular model.
+
+**PID.** A cascade of PID loops is also a dynamic feedback system, so its
+poles can be tested. Positive gains alone are not a stability argument.
+The depth loop requests pitch, the pitch loop drives the elevator, and the
+plant couples pitch, heave, and depth. All these effects remain in the
+combined model. Each PID command uses the integral **after** that sample's
+error accumulation. Speed feedback uses
+`(u_current - u_previous) / 0.05` for its derivative term, so the stored
+previous speed is an additional state. Pitch/yaw derivatives instead use
+measured BODY rates; the depth derivative uses the BODY-to-NED conversion.
+
+The analysis calls the actual PID `command()` and telemetry conversion
+with these memory states restored on each evaluation. Let $F(z)$ mean one
+complete controller update followed by one held-command plant interval.
+The closed-loop matrix is obtained by central differences at cruise:
+
+```math
+A_{\mathrm{cl}}[:,j]\simeq
+\frac{F(+\epsilon\mathbf e_j)-F(-\epsilon\mathbf e_j)}{2\epsilon}.
+```
+
+Here $\mathbf e_j$ is a coordinate basis vector, and zero denotes the
+trim-relative augmented state. Each evaluation begins with its own stated
+integral/history values. Otherwise, numerical differentiation would mix
+different controller histories and give the wrong matrix.
+
+The calculation uses $\epsilon=10^{-5}$ in each coordinate's native units
+and checks against $10^{-4}$. As an independent implementation check, it
+also builds the Jacobian of the actual controller followed by five
+nonlinear RK4 steps. For LQR/LQI, the controller-plus-linear-plant
+Jacobian is checked against the explicit matrices above.
+
+### Numerical results and how to read the pole plot
+
+At the stated operating point, the controller-plus-linear-plant results are:
+
+| Law | Largest pole magnitude $\rho$ | Modes with magnitude ≥ 1 | Slowest modal time constant |
+| --- | ---: | ---: | ---: |
+| PID | 0.9994558602 | 0 | 91.86 s |
+| LQR | 0.9962032990 | 0 | 13.14 s |
+| LQI | 0.9984336834 | 0 | 31.90 s |
+
+The RK4-based check also places every pole inside the unit circle; each
+largest magnitude agrees with the corresponding table entry within
+$10^{-6}$. These are numerical results for the current coefficients and
+gains, not values prescribed by PID or LQR theory.
+
+![Closed-loop poles for PID, LQR and LQI, with the unit circle and a zoom near one](figures/stability_poles.png)
+
+The left panel shows all poles against the unit-circle boundary. The right
+panel expands the slow modes near +1; some shared modes overlap. The zoom
+uses different horizontal and vertical scales, so judge the poles against
+the drawn boundary rather than expecting a circular shape in that panel.
+
+A pole near one is expected for a slow mode sampled every 0.05 s. Its
+envelope time constant is $\tau=-\Delta t/\ln|\lambda|$, which gives the
+last column above. This is **not** a mission arrival time or a measured
+settling time: the observed response also depends on which modes the
+disturbance excites and how strongly they appear in the measured output.
+Likewise, $1-\rho$ is not a gain margin, phase margin, or general robustness
+guarantee. Do not rank the controllers' overall performance by $\rho$ alone.
+
+### Nonlinear recovery from the same small disturbance
+
+To connect the poles to observable behavior, each controller starts at
+the cruise equilibrium with the same simultaneous perturbation:
+
+| Quantity | Initial deviation from cruise |
+| --- | ---: |
+| Depth | +0.20 m |
+| Roll | +0.5° |
+| Pitch | +1.0° |
+| Heading | +2.0° |
+| Surge speed | +0.05 m/s |
+| Other velocities/rates and integral errors | Zero |
+
+The previous speed measurement remains at nominal cruise, so the PID sees
+the imposed speed change on its first update. References stay fixed; the
+experiment runs for 300 simulated seconds without a waypoint-arrival stop.
+It uses the production controllers, telemetry conversion, vehicle
+parameters, and RK4 integrator directly in an offline harness. It does not
+launch the HTTP/IPC services. The separate service tests exercise IPC and
+the full mission lifecycle.
+
+![Small-disturbance recovery of depth, attitude and speed, comparing nonlinear and local linear responses](figures/stability_recovery.png)
+
+Solid curves are nonlinear simulator responses, including the usual command
+and integral limits. Dashed curves are predictions from repeated application
+of the corresponding $A_{\mathrm{cl}}$, from the same initial vehicle and
+controller state. Their agreement near cruise connects the pole analysis
+to the implemented dynamics. Error decay, overshoot, and the longer integral
+tails are visible without conflating them with surface departure or changing
+waypoint guidance.
+
+The final panel uses a logarithmic vertical axis to expose small residuals.
+For that panel only, the five displayed errors are divided by their initial
+perturbation magnitudes; their Euclidean norm is divided by its initial value
+$\sqrt{5}$. This produces a dimensionless comparison starting at one. It is
+not a Lyapunov function and need not decrease at every sample; it also does
+not include the unplotted velocities or controller memory. Stability is
+assessed using all states in the pole calculation, not just this trace.
+
+![Actuator commands during recovery, with physical limits and a close view of the initial transient](figures/stability_actuators.png)
+
+The left panels show the whole recovery with 0/3000 RPM and ±20° command
+limits. The right panels expand the first 30 seconds and the command scale.
+The generator verifies that neither actuator nor integral limits are reached
+in this particular experiment. That matters because the linear pole result
+assumes inactive constraints. Bounded commands alone would not establish
+that tracking errors decay.
+
+### What is established, and what still needs separate validation
+
+- **Established numerically:** the complete local models for all three laws
+  are asymptotically stable at nominal submerged cruise; the sampled
+  nonlinear implementation gives consistent local pole results.
+- **Demonstrated in a nonlinear experiment:** small depth, attitude, and
+  speed disturbances recover under the implemented controller laws, with
+  inactive actuator/integral constraints for the plotted initial condition.
+- **Separate mission evidence:** the surface-start arrival plots and service
+  tests cover a larger excursion with changing bearing. Successful runs are
+  useful validation, but do not prove a global region of attraction.
+- **Not quantified here:** gain/phase margins, tolerance to arbitrary model
+  errors, additional delays, noise, current, or loss of fin authority at low
+  speed. Integrator clamps and LQI anti-windup limit problematic behavior;
+  they are not themselves proofs of nonlinear stability. Classical loop
+  margins would require specified loop openings with the other loops closed;
+  see [stability-margin analysis](https://www.mathworks.com/help/control/stability-margins.html).
+
+### Reproduce the analysis and figures
+
+From the repository root, using the existing requirements:
+
+```bash
+.venv/bin/python -m scripts.controller_stability
+```
+
+The [analysis script](../scripts/controller_stability.py) regenerates the three
+`stability_*.png` figures in `controller/figures/`. It prints pole radii,
+RK4 cross-checks, modal time constants, final tracking errors, and minimum /
+maximum actuator commands. It checks the trim equilibrium, finite-difference
+consistency, LQR/LQI matrix agreement, strict pole stability, finite responses,
+inactive limits, and final displayed errors below 5% of their initial
+magnitudes. These assertions make the figures reproducible checks of the
+current code. Generation takes longer than a pole-only calculation because
+it also integrates three 300 s nonlinear recoveries at 100 Hz.
+
 ## Tuning
 
 These are reproducible **first-pass estimates from the current simulator**,
