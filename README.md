@@ -52,9 +52,11 @@ overrides. Stop the script with Ctrl+C to stop both processes it started.
 The simulator owns the clock, RK4 integration, 6-DOF vehicle dynamics, and
 state publication. The controller owns waypoint guidance and the PID, LQR,
 and LQI control laws. `common/messages.py` defines the shared packet schema,
-and `common/ipc.py` provides the Unix socket transport. The controller's
-linearization uses the Fossen model in `simulator/scratch/fossen.py`; the
-simulator also reuses its ellipsoidal submergence calculation.
+and `common/ipc.py` provides the Unix socket transport. The simulator owns
+both the Fossen model in `simulator/scratch/fossen.py` and the ellipsoidal
+submergence calculation. The controller reuses the Fossen model's derivative
+for LQR/LQI linearization, which includes that submergence calculation, so
+the controller needs no separate implementation.
 
 ### Simulator on its own
 
