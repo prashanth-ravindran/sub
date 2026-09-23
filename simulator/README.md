@@ -167,18 +167,18 @@ approximations.
 ## Equations and signs
 
 Let $\mathbf S(\mathbf a)\mathbf b=\mathbf a\times\mathbf b$ and
-$\mathbf I=\operatorname{diag}(I_x,I_y,I_z)$. The rigid-body and added-mass
+$\mathbf I=\mathrm{diag}(I_x,I_y,I_z)$. The rigid-body and added-mass
 terms are:
 
 ```math
 \begin{aligned}
-\mathbf M_{\mathrm{RB}} &= \operatorname{diag}(m,m,m,I_x,I_y,I_z), \\
+\mathbf M_{\mathrm{RB}} &= \mathrm{diag}(m,m,m,I_x,I_y,I_z), \\
 \mathbf C_{\mathrm{RB}} &=
 \begin{bmatrix}
 m\mathbf S(\boldsymbol\omega) & \mathbf 0 \\
 \mathbf 0 & -\mathbf S(\mathbf I\boldsymbol\omega)
 \end{bmatrix}, \\
-\mathbf M_{\mathrm A} &= \operatorname{diag}(\mathbf m_{\mathrm A}), \\
+\mathbf M_{\mathrm A} &= \mathrm{diag}(\mathbf m_{\mathrm A}), \\
 \mathbf a &= \mathbf M_{\mathrm A}\boldsymbol\nu, \\
 \mathbf C_{\mathrm A} &=
 \begin{bmatrix}
@@ -312,9 +312,9 @@ not introduce Earth curvature into the simulation:
 
 ```math
 \begin{aligned}
-\mathrm{lat} &= \mathrm{lat}_0+\operatorname{deg}\!\left(\frac{d_N}{R_E}\right), \\
-\mathrm{lon} &= \mathrm{lon}_0+\operatorname{deg}\!\left(
-\frac{d_E}{R_E\cos(\mathrm{lat}_{0,\mathrm{rad}})}\right).
+\mathrm{lat} &= \mathrm{lat}_0+\frac{180d_N}{\pi R_E}, \\
+\mathrm{lon} &= \mathrm{lon}_0+
+\frac{180d_E}{\pi R_E\cos(\mathrm{lat}_{0,\mathrm{rad}})}.
 \end{aligned}
 ```
 
