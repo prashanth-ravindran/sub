@@ -67,15 +67,12 @@ writes a state CSV. The UI obtains run status and the completed CSV through
 the API, then plots the results.
 
 ```mermaid
-flowchart LR
-    UI["Simulator UI"] -->|HTTP requests| API["Simulator API process"]
-    API -->|status and CSV| UI
+flowchart TB
+    UI["Simulator UI"] <-->|HTTP| API["Simulator API process"]
     API -->|starts worker thread| LOOP["Simulation loop"]
     INPUT["Step scenario or zero commands"] --> LOOP
     LOOP --> PHYSICS["Clock, RK4, and 6-DOF vehicle"]
-    PHYSICS --> LOOP
     LOOP --> CSV["State CSV"]
-    CSV --> API
 ```
 
 The simulator can also run directly with `python -m simulator`, without the
@@ -95,16 +92,12 @@ setpoints, measured state, and commands; the simulator logs every physics
 step. The controller API serves both CSV files and run status to its UI.
 
 ```mermaid
-flowchart LR
-    UI["Controller UI"] -->|HTTP requests| API["Controller API process"]
-    API -->|status and CSV| UI
+flowchart TB
+    UI["Controller UI"] <-->|HTTP| API["Controller API process"]
     API -->|starts worker thread| CTRL["Guidance and PID, LQR, or LQI"]
-    SIM["Simulator child process"] -->|vehicle_state over Unix socket| CTRL
-    CTRL -->|actuator_command or simulation_stop| SIM
+    CTRL <-->|Unix socket: state and commands| SIM["Simulator child process"]
     CTRL --> CONTROL_CSV["20 Hz controller CSV"]
     SIM --> STATE_CSV["100 Hz simulator CSV"]
-    CONTROL_CSV --> API
-    STATE_CSV --> API
 ```
 
 ## Inter-process communication (IPC)
